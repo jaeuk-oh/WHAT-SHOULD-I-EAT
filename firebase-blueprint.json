@@ -1,0 +1,31 @@
+{
+  "project_name": "냉털메이트",
+  "collections": [
+    {
+      "name": "users",
+      "description": "User profiles and saved recipes",
+      "fields": [
+        { "name": "email", "type": "string" },
+        { "name": "displayName", "type": "string" },
+        { "name": "savedRecipes", "type": "array" },
+        { "name": "createdAt", "type": "timestamp" },
+        { "name": "updatedAt", "type": "timestamp" }
+      ],
+      "rules": "Users can only read and write their own profile."
+    },
+    {
+      "name": "recipes",
+      "description": "Community and user-generated recipes",
+      "fields": [
+        { "name": "title", "type": "string" },
+        { "name": "author", "type": "string" },
+        { "name": "time", "type": "string" },
+        { "name": "difficulty", "type": "string" },
+        { "name": "tags", "type": "array" },
+        { "name": "likes", "type": "number" },
+        { "name": "createdAt", "type": "timestamp" }
+      ],
+      "rules": "Anyone can read. Authenticated users can write."
+    }
+  ]
+}
