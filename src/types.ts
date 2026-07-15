@@ -40,6 +40,15 @@ export interface SavedRecipe {
 
 export type SavedRecipeInput = Omit<SavedRecipe, 'id'>;
 
+export interface CommunityRecipe {
+  id: string;
+  title: string;
+  author: string;
+  type: 'community' | 'celeb';
+  tags: string[];
+  likes: number;
+}
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function startOfDay(date: Date): Date {

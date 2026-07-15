@@ -2,17 +2,20 @@ import {
   collection,
   deleteDoc,
   doc,
+  increment,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
   Timestamp,
+  updateDoc,
   writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import {
   expiryFromDays,
+  type CommunityRecipe,
   type Ingredient,
   type IngredientCategory,
   type NewIngredient,
@@ -69,6 +72,47 @@ export async function saveRecipe(uid: string, recipe: SavedRecipeInput) {
 
 export async function unsaveRecipe(uid: string, title: string) {
   await deleteDoc(doc(savedCol(uid), savedDocId(title)));
+}
+
+const recipesCol = () => collection(db, 'recipes');
+
+export function subscribeRecipes(
+  onChange: (items: CommunityRecipe[]) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(recipesCol(), orderBy('likes', 'desc'));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onChange(
+        snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            title: (data.title as string) ?? '',
+            author: (data.author as string) ?? '',
+            type: (data.type as CommunityRecipe['type']) ?? 'community',
+            tags: (data.tags as string[]) ?? [],
+            likes: (data.likes as number) ?? 0,
+          };
+        }),
+      );
+    },
+    onError,
+  );
+}
+
+export async function likeRecipe(id: string) {
+  await updateDoc(doc(recipesCol(), id), { likes: increment(1) });
+}
+
+// 문서 ID를 고정해 여러 번 실행해도 중복이 생기지 않는다 (개발용 시드)
+export async function seedRecipes(items: Omit<CommunityRecipe, 'id'>[], ids: string[]) {
+  const batch = writeBatch(db);
+  items.forEach((item, idx) => {
+    batch.set(doc(recipesCol(), ids[idx]), { ...item, createdAt: serverTimestamp() });
+  });
+  await batch.commit();
 }
 
 export function subscribeIngredients(

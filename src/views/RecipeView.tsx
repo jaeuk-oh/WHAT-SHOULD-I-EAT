@@ -2,26 +2,41 @@ import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { AlertTriangle, ArrowLeft, Bookmark, ChefHat, Info, RefreshCw, Send, Wand2 } from 'lucide-react';
 import { fetchRecommendations } from '../lib/api';
-import type { IngredientVM, RecommendedRecipe, SavedRecipeInput } from '../types';
+import { likeRecipe, seedRecipes, subscribeRecipes } from '../lib/db';
+import type { CommunityRecipe, IngredientVM, RecommendedRecipe, SavedRecipeInput } from '../types';
 
 const categories = ['전체', '다이어트', '간단한', '자극적인', '비건'];
 
-// Stage 5에서 Firestore recipes 컬렉션으로 대체 예정 (시드 데이터 원본)
-export const communityRecipes = [
-  { id: 101, title: '자취생 10분컷 참치마요 덮밥', author: '요리왕비룡', likes: 1245, rank: 1, tags: ['자취', '초간단'] },
-  { id: 102, title: '식단러의 눈물젖은 오트밀죽', author: '다이어터', likes: 890, rank: 2, tags: ['다이어트', '오트밀'] },
-  { id: 103, title: '할머니 비밀 레시피, 돼지갈비찜', author: '한식러버', likes: 756, rank: 3, tags: ['돼지고기', '전통'] },
-  { id: 104, title: '남은 치킨 200% 활용 볶음밥', author: '치느님', likes: 432, rank: 4, tags: ['활용', '치킨'] },
+// recipes 컬렉션이 비어 있을 때 개발 모드에서 1회 투입하는 초기 데이터
+const SEED_IDS = [
+  'community-tuna-mayo',
+  'community-oatmeal',
+  'community-galbijjim',
+  'community-chicken-rice',
+  'celeb-jajang',
+  'celeb-onion',
+  'celeb-tendon',
+];
+const SEED_RECIPES: Omit<CommunityRecipe, 'id'>[] = [
+  { title: '자취생 10분컷 참치마요 덮밥', author: '요리왕비룡', type: 'community', likes: 1245, tags: ['자취', '초간단'] },
+  { title: '식단러의 눈물젖은 오트밀죽', author: '다이어터', type: 'community', likes: 890, tags: ['다이어트', '오트밀'] },
+  { title: '할머니 비밀 레시피, 돼지갈비찜', author: '한식러버', type: 'community', likes: 756, tags: ['돼지고기', '전통'] },
+  { title: '남은 치킨 200% 활용 볶음밥', author: '치느님', type: 'community', likes: 432, tags: ['활용', '치킨'] },
+  { title: '어남선생 류수영의 평생 짜장면', author: '류수영', type: 'celeb', likes: 5430, tags: ['셀럽', '면요리'] },
+  { title: '백종원의 만능 양파 볶음', author: '백종원', type: 'celeb', likes: 4321, tags: ['쉐프', '만능'] },
+  { title: '성시경 텐동 만들기', author: '성시경', type: 'celeb', likes: 3210, tags: ['먹을텐데', '튀김'] },
 ];
 
-export const celebRecipes = [
-  { id: 201, title: '어남선생 류수영의 평생 짜장면', author: '류수영', likes: 5430, tags: ['셀럽', '면요리'] },
-  { id: 202, title: '백종원의 만능 양파 볶음', author: '백종원', likes: 4321, tags: ['쉐프', '만능'] },
-  { id: 203, title: '성시경 텐동 만들기', author: '성시경', likes: 3210, tags: ['먹을텐데', '튀김'] },
-];
-
-const HeartIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+const HeartButton = ({ onLike, likes }: { onLike: () => void; likes: number }) => (
+  <div className="flex flex-col items-center justify-center shrink-0 z-10">
+    <button
+      onClick={onLike}
+      className="w-10 h-10 rounded-full bg-surface-container-low text-error flex items-center justify-center hover:bg-error/10 transition-colors"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+    </button>
+    <span className="text-xs font-bold text-on-surface-variant mt-1">{likes.toLocaleString()}</span>
+  </div>
 );
 
 export default function RecipeView({ onBack, ingredients, savedTitles, onToggleSave }: {
@@ -36,8 +51,12 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
   const [recipes, setRecipes] = useState<RecommendedRecipe[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [shared, setShared] = useState<CommunityRecipe[] | null>(null);
+  const [seeding, setSeeding] = useState(false);
 
   const urgent = ingredients.filter(i => i.daysLeft <= 2);
+  const communityList = (shared ?? []).filter(r => r.type === 'community');
+  const celebList = (shared ?? []).filter(r => r.type === 'celeb');
 
   const loadRecipes = async (opts?: { exclude?: string[]; category?: string }) => {
     setLoading(true);
@@ -61,6 +80,8 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
 
   useEffect(() => {
     loadRecipes();
+    const unsubscribe = subscribeRecipes(setShared, (e) => console.error('레시피 목록 구독 실패:', e));
+    return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -68,6 +89,43 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
     setActiveCategory(cat);
     loadRecipes({ category: cat });
   };
+
+  const handleLike = (id: string) => {
+    likeRecipe(id).catch((e) => console.error('좋아요 실패:', e));
+  };
+
+  const handleSeed = async () => {
+    setSeeding(true);
+    try {
+      await seedRecipes(SEED_RECIPES, SEED_IDS);
+    } catch (e) {
+      console.error('시드 실패:', e);
+      alert('시드 데이터 투입에 실패했어요.');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  const sharedEmptyState = (label: string) => (
+    <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-4">
+      {shared === null ? (
+        <p className="text-sm">불러오는 중...</p>
+      ) : (
+        <>
+          <p className="text-sm">아직 등록된 {label} 레시피가 없어요.</p>
+          {import.meta.env.DEV && (
+            <button
+              onClick={handleSeed}
+              disabled={seeding}
+              className="px-5 h-11 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-60"
+            >
+              {seeding ? '투입 중...' : '초기 데이터 넣기 (개발용)'}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
 
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-surface">
@@ -220,10 +278,10 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
                 <h2 className="text-lg font-bold">이번 주 인기 랭킹 🏆</h2>
               </div>
 
-              {communityRecipes.map(recipe => (
+              {communityList.length === 0 ? sharedEmptyState('커뮤니티') : communityList.map((recipe, idx) => (
                 <article key={recipe.id} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex items-center gap-4 hover:shadow-md transition-shadow relative overflow-hidden">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shrink-0 z-10 ${recipe.rank <= 3 ? 'bg-tertiary text-white shadow-md' : 'bg-surface-variant text-on-surface-variant'}`}>
-                    {recipe.rank}
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shrink-0 z-10 ${idx < 3 ? 'bg-tertiary text-white shadow-md' : 'bg-surface-variant text-on-surface-variant'}`}>
+                    {idx + 1}
                   </div>
                   <div className="flex-1 z-10 pr-2">
                     <div className="flex justify-between items-start">
@@ -242,13 +300,8 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
                       ))}
                     </div>
                   </div>
-                  <div className="flex flex-col items-center justify-center shrink-0 z-10">
-                    <div className="w-10 h-10 rounded-full bg-surface-container-low text-error flex items-center justify-center">
-                      <HeartIcon />
-                    </div>
-                    <span className="text-xs font-bold text-on-surface-variant mt-1">{recipe.likes.toLocaleString()}</span>
-                  </div>
-                  {recipe.rank === 1 && (
+                  <HeartButton onLike={() => handleLike(recipe.id)} likes={recipe.likes} />
+                  {idx === 0 && (
                     <div className="absolute top-0 right-0 w-32 h-32 bg-tertiary-container/20 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none" />
                   )}
                 </article>
@@ -262,8 +315,8 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
                 <h2 className="text-lg font-bold">인증된 프로의 맛 👨‍🍳</h2>
               </div>
 
-              {celebRecipes.map(recipe => (
-                <article key={recipe.id} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex justify-between items-center hover:shadow-md transition-shadow">
+              {celebList.length === 0 ? sharedEmptyState('셀럽/쉐프') : celebList.map(recipe => (
+                <article key={recipe.id} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex justify-between items-center gap-4 hover:shadow-md transition-shadow">
                   <div className="flex-1 pr-2">
                     <div className="flex justify-between items-start">
                       <h3 className="text-lg font-bold text-on-surface leading-tight mb-1">{recipe.title}</h3>
@@ -281,12 +334,7 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
                       ))}
                     </div>
                   </div>
-                  <div className="flex flex-col items-center justify-center shrink-0">
-                    <div className="w-10 h-10 rounded-full bg-surface-container-low text-error flex items-center justify-center">
-                      <HeartIcon />
-                    </div>
-                    <span className="text-xs font-bold text-on-surface-variant mt-1">{recipe.likes.toLocaleString()}</span>
-                  </div>
+                  <HeartButton onLike={() => handleLike(recipe.id)} likes={recipe.likes} />
                 </article>
               ))}
             </motion.div>
