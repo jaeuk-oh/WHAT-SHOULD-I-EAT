@@ -9,10 +9,11 @@
  */
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  ArrowLeft, ShoppingBag, UserCircle, AlertCircle, AlertTriangle, 
-  X, Plus, CheckCircle, Camera, Utensils, Receipt, ChefHat, RefreshCw, Info, Milk, Package, Leaf, Egg, Apple, Send, Wand2, Beef, Mic, Bookmark
+import {
+  ArrowLeft, ShoppingBag, UserCircle, AlertCircle, AlertTriangle,
+  X, Plus, CheckCircle, Camera, Utensils, Receipt, ChefHat, RefreshCw, Info, Milk, Package, Leaf, Egg, Apple, Send, Wand2, Beef, Mic, Bookmark, LogOut
 } from 'lucide-react';
+import { useAuth } from './hooks/useAuth';
 
 interface Ingredient {
   id: string;
@@ -21,33 +22,48 @@ interface Ingredient {
   daysLeft: number;
 }
 
-const LoginView: React.FC<{ onLogin: () => void }> = ({ onLogin }) => (
-  <motion.div 
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0, y: -20 }}
-    className="w-full max-w-md mx-auto flex flex-col items-center justify-center min-h-screen p-6"
-  >
-    <div className="bg-surface/70 backdrop-blur-md p-8 rounded-2xl shadow-lg border border-white/30 flex flex-col items-center w-full space-y-8">
-      <div className="flex flex-col items-center space-y-4">
-        <div className="w-24 h-24 rounded-2xl bg-white shadow-sm flex items-center justify-center border border-outline-variant/30">
-          <ShoppingBag size={48} className="text-primary" />
+const LoginView: React.FC<{ onLogin: () => Promise<void>; error: string | null }> = ({ onLogin, error }) => {
+  const [pending, setPending] = useState(false);
+  const handleLogin = async () => {
+    setPending(true);
+    try {
+      await onLogin();
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="w-full max-w-md mx-auto flex flex-col items-center justify-center min-h-screen p-6"
+    >
+      <div className="bg-surface/70 backdrop-blur-md p-8 rounded-2xl shadow-lg border border-white/30 flex flex-col items-center w-full space-y-8">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-24 h-24 rounded-2xl bg-white shadow-sm flex items-center justify-center border border-outline-variant/30">
+            <ShoppingBag size={48} className="text-primary" />
+          </div>
+          <div className="text-center space-y-2">
+            <h1 className="text-3xl font-bold text-primary">냉털메이트</h1>
+            <p className="text-on-surface-variant">영수증만 올리면, 오늘 뭐 먹을지 정해드려요</p>
+          </div>
         </div>
-        <div className="text-center space-y-2">
-          <h1 className="text-3xl font-bold text-primary">냉털메이트</h1>
-          <p className="text-on-surface-variant">영수증만 올리면, 오늘 뭐 먹을지 정해드려요</p>
+        <div className="w-full space-y-3">
+          <button
+            onClick={handleLogin}
+            disabled={pending}
+            className="w-full h-14 bg-white border border-outline-variant hover:bg-surface-container-low transition-colors rounded-xl shadow-sm flex items-center justify-center space-x-3 disabled:opacity-60"
+          >
+            <span className="font-semibold">{pending ? '로그인 중...' : '구글 계정으로 시작하기'}</span>
+          </button>
+          {error && <p className="text-sm text-error text-center">{error}</p>}
         </div>
+        <p className="text-xs text-outline">로그인하면 이용약관에 동의하는 것으로 간주됩니다</p>
       </div>
-      <button 
-        onClick={onLogin}
-        className="w-full h-14 bg-white border border-outline-variant hover:bg-surface-container-low transition-colors rounded-xl shadow-sm flex items-center justify-center space-x-3"
-      >
-        <span className="font-semibold">구글 계정으로 시작하기</span>
-      </button>
-      <p className="text-xs text-outline">로그인하면 이용약관에 동의하는 것으로 간주됩니다</p>
-    </div>
-  </motion.div>
-);
+    </motion.div>
+  );
+};
 
 const EmptyHome = ({ onUpload }: { onUpload: () => void }) => (
   <div className="flex-1 flex flex-col items-center justify-center p-5 pb-32">
@@ -659,13 +675,21 @@ const SavedView = ({ onBack, savedRecipes, toggleSave }: { onBack: () => void, s
 };
 
 export default function App() {
-  const [view, setView] = useState<'login'|'home'|'receipt'|'recipe'|'saved'>('login');
+  const { user, loading: authLoading, error: authError, login, logout } = useAuth();
+  const [view, setView] = useState<'home'|'receipt'|'recipe'|'saved'>('home');
+  const [menuOpen, setMenuOpen] = useState(false);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [savedRecipes, setSavedRecipes] = useState<number[]>([]);
 
   const toggleSave = (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
     setSavedRecipes(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const handleLogout = async () => {
+    setMenuOpen(false);
+    setView('home');
+    await logout();
   };
 
   const handleSaveReceipt = () => {
@@ -685,13 +709,26 @@ export default function App() {
     setView('home');
   };
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4 animate-pulse">
+          <div className="w-20 h-20 rounded-2xl bg-white shadow-sm flex items-center justify-center border border-outline-variant/30">
+            <ShoppingBag size={40} className="text-primary" />
+          </div>
+          <span className="text-xl font-bold text-primary">냉털메이트</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background text-on-background font-sans overflow-x-hidden">
       <AnimatePresence mode="wait">
-        {view === 'login' && (
-          <LoginView key="login" onLogin={() => setView('home')} />
+        {!user && (
+          <LoginView key="login" onLogin={login} error={authError} />
         )}
-        {view === 'home' && (
+        {user && view === 'home' && (
           <motion.div 
             key="home"
             initial={{ opacity: 0, x: -20 }}
@@ -701,9 +738,28 @@ export default function App() {
           >
             <header className="flex justify-between items-center p-5 sticky top-0 bg-surface z-50 shadow-sm max-w-2xl mx-auto w-full">
               <div className="text-2xl font-bold text-primary">냉털메이트</div>
-              <button onClick={() => setView('saved')} className="text-on-surface-variant hover:text-primary transition-colors">
-                <UserCircle size={28} />
-              </button>
+              <div className="relative">
+                <button onClick={() => setMenuOpen(o => !o)} className="text-on-surface-variant hover:text-primary transition-colors flex items-center">
+                  {user?.photoURL ? (
+                    <img src={user.photoURL} alt="프로필" referrerPolicy="no-referrer" className="w-8 h-8 rounded-full border border-outline-variant" />
+                  ) : (
+                    <UserCircle size={28} />
+                  )}
+                </button>
+                {menuOpen && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-surface-variant py-2 z-[70]">
+                    <div className="px-4 py-2 text-sm text-on-surface-variant border-b border-surface-variant truncate">
+                      {user?.displayName ?? user?.email}
+                    </div>
+                    <button onClick={() => { setMenuOpen(false); setView('saved'); }} className="w-full text-left px-4 py-3 text-sm font-medium hover:bg-surface-container-low flex items-center gap-2">
+                      <Bookmark size={16} /> 저장한 레시피
+                    </button>
+                    <button onClick={handleLogout} className="w-full text-left px-4 py-3 text-sm font-medium text-error hover:bg-surface-container-low flex items-center gap-2">
+                      <LogOut size={16} /> 로그아웃
+                    </button>
+                  </div>
+                )}
+              </div>
             </header>
             
             {ingredients.length === 0 ? (
@@ -718,7 +774,7 @@ export default function App() {
             )}
           </motion.div>
         )}
-        {view === 'receipt' && (
+        {user && view === 'receipt' && (
           <motion.div
             key="receipt"
             initial={{ opacity: 0, y: 50 }}
@@ -729,7 +785,7 @@ export default function App() {
              <ReceiptView onSave={handleSaveReceipt} onBack={() => setView('home')} />
           </motion.div>
         )}
-        {view === 'recipe' && (
+        {user && view === 'recipe' && (
           <motion.div
             key="recipe"
             initial={{ opacity: 0, scale: 0.95 }}
@@ -740,7 +796,7 @@ export default function App() {
              <RecipeView onBack={() => setView('home')} savedRecipes={savedRecipes} toggleSave={toggleSave} />
           </motion.div>
         )}
-        {view === 'saved' && (
+        {user && view === 'saved' && (
           <motion.div
             key="saved"
             initial={{ opacity: 0, x: 20 }}
