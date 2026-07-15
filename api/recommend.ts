@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from './_utils';
-import { recommendRecipes, type RecommendInput } from './_core';
+import { requireAuth } from './_utils.js';
+import { recommendRecipes, type RecommendInput } from './_core.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {

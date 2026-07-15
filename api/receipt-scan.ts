@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from './_utils';
-import { scanReceiptImage } from './_core';
+import { requireAuth } from './_utils.js';
+import { scanReceiptImage } from './_core.js';
 
 // base64 data URL 기준 약 4.5MB (클라이언트에서 1280px JPEG로 압축해 전송)
 const MAX_IMAGE_LENGTH = 6_000_000;
