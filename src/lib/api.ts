@@ -1,5 +1,5 @@
 import { auth } from './firebase';
-import type { NewIngredient } from '../types';
+import type { NewIngredient, RecommendedRecipe } from '../types';
 
 async function authedPost<T>(path: string, body: unknown): Promise<T> {
   const user = auth.currentUser;
@@ -20,4 +20,16 @@ async function authedPost<T>(path: string, body: unknown): Promise<T> {
 export async function scanReceipt(imageDataUrl: string): Promise<NewIngredient[]> {
   const data = await authedPost<{ items: NewIngredient[] }>('/api/receipt-scan', { image: imageDataUrl });
   return data.items;
+}
+
+export interface RecommendRequest {
+  ingredients: { name: string; category: string; daysLeft: number }[];
+  prompt?: string;
+  category?: string;
+  exclude?: string[];
+}
+
+export async function fetchRecommendations(request: RecommendRequest): Promise<RecommendedRecipe[]> {
+  const data = await authedPost<{ recipes: RecommendedRecipe[] }>('/api/recommend', request);
+  return data.recipes;
 }

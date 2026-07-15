@@ -14,6 +14,32 @@ export interface NewIngredient {
   shelfLifeDays: number;
 }
 
+export type IngredientVM = Ingredient & { daysLeft: number };
+
+export interface RecommendedRecipe {
+  title: string;
+  time: string;
+  difficulty: string;
+  warning: string;
+  warningType: 'alert' | 'info';
+  tags: string[];
+  substitutes: { missing: string; replaceWith: string }[];
+}
+
+export type RecipeSource = 'ai' | 'community' | 'celeb';
+
+export interface SavedRecipe {
+  id: string;
+  title: string;
+  source: RecipeSource;
+  time: string;
+  difficulty: string;
+  author: string;
+  tags: string[];
+}
+
+export type SavedRecipeInput = Omit<SavedRecipe, 'id'>;
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function startOfDay(date: Date): Date {

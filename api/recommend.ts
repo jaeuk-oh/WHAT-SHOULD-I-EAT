@@ -1,0 +1,38 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { requireAuth } from './_utils';
+import { recommendRecipes, type RecommendInput } from './_core';
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: '허용되지 않은 메서드입니다.' });
+  }
+  const uid = await requireAuth(req, res);
+  if (!uid) return;
+
+  const body = (req.body ?? {}) as Partial<RecommendInput>;
+  if (!Array.isArray(body.ingredients) || body.ingredients.length === 0) {
+    return res.status(400).json({ error: '재료를 먼저 등록해주세요.' });
+  }
+  if (body.ingredients.length > 100) {
+    return res.status(400).json({ error: '재료가 너무 많습니다.' });
+  }
+
+  const input: RecommendInput = {
+    ingredients: body.ingredients.slice(0, 100).map((i) => ({
+      name: String(i.name ?? '').slice(0, 50),
+      category: String(i.category ?? '기타').slice(0, 10),
+      daysLeft: Math.max(0, Math.min(999, Number(i.daysLeft) || 0)),
+    })),
+    prompt: typeof body.prompt === 'string' ? body.prompt.slice(0, 200) : undefined,
+    category: typeof body.category === 'string' ? body.category.slice(0, 20) : undefined,
+    exclude: Array.isArray(body.exclude) ? body.exclude.slice(0, 20).map((t) => String(t).slice(0, 60)) : undefined,
+  };
+
+  try {
+    const recipes = await recommendRecipes(input);
+    return res.status(200).json({ recipes });
+  } catch (e) {
+    console.error('recommend 실패:', e);
+    return res.status(502).json({ error: '레시피 추천에 실패했어요. 잠시 후 다시 시도해주세요.' });
+  }
+}

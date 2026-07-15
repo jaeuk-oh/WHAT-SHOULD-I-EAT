@@ -16,6 +16,102 @@ export interface ScannedItem {
   shelfLifeDays: number;
 }
 
+export interface RecommendInput {
+  ingredients: { name: string; category: string; daysLeft: number }[];
+  prompt?: string;
+  category?: string;
+  exclude?: string[];
+}
+
+export interface RecommendedRecipe {
+  title: string;
+  time: string;
+  difficulty: string;
+  warning: string;
+  warningType: 'alert' | 'info';
+  tags: string[];
+  substitutes: { missing: string; replaceWith: string }[];
+}
+
+export async function recommendRecipes(input: RecommendInput): Promise<RecommendedRecipe[]> {
+  const ingredientLines = input.ingredients
+    .map((i) => `- ${i.name} (${i.category}, D-${i.daysLeft})`)
+    .join('\n');
+
+  let request = `내 냉장고 재료 (D-day는 남은 보관일):\n${ingredientLines}\n\n`;
+  if (input.category) request += `조건: "${input.category}" 스타일의 메뉴를 원해.\n`;
+  if (input.prompt) request += `요청사항: ${input.prompt}\n`;
+  if (input.exclude && input.exclude.length > 0) {
+    request += `이미 본 메뉴라서 제외할 것: ${input.exclude.join(', ')}\n`;
+  }
+  request += '레시피 3~5개를 추천해줘.';
+
+  const response = await getOpenAI().chat.completions.create({
+    model: getModel(),
+    messages: [
+      {
+        role: 'system',
+        content:
+          '너는 1인 가구를 위한 냉장고 파먹기 요리 추천 셰프다. ' +
+          '사용자의 냉장고 재료 목록을 보고 실제로 만들 수 있는 레시피를 추천한다. ' +
+          'D-2 이하 임박 재료가 있으면 그 재료를 우선 사용하는 레시피를 앞쪽에 배치하고, warning에 임박 재료를 언급하며 warningType은 alert로 한다. ' +
+          '임박 재료를 쓰지 않는 레시피의 warning은 짧은 유용한 코멘트로 하고 warningType은 info로 한다. ' +
+          'tags에는 그 레시피에 쓰이는 주요 재료명을 넣되 사용자가 가진 재료를 앞에 둔다. ' +
+          '사용자에게 없는 재료가 꼭 필요하면 substitutes에 {missing: 없는 재료, replaceWith: 대체 재료}를 넣고, 대체 재료는 가능하면 사용자가 가진 것으로 고른다. 없으면 빈 배열. ' +
+          "time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나. 모든 텍스트는 한국어.",
+      },
+      { role: 'user', content: request },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'recipe_recommendations',
+        strict: true,
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            recipes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  title: { type: 'string' },
+                  time: { type: 'string' },
+                  difficulty: { type: 'string', enum: ['아주 쉬움', '쉬움', '보통', '어려움'] },
+                  warning: { type: 'string' },
+                  warningType: { type: 'string', enum: ['alert', 'info'] },
+                  tags: { type: 'array', items: { type: 'string' } },
+                  substitutes: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      additionalProperties: false,
+                      properties: {
+                        missing: { type: 'string' },
+                        replaceWith: { type: 'string' },
+                      },
+                      required: ['missing', 'replaceWith'],
+                    },
+                  },
+                },
+                required: ['title', 'time', 'difficulty', 'warning', 'warningType', 'tags', 'substitutes'],
+              },
+            },
+          },
+          required: ['recipes'],
+        },
+      },
+    },
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error('빈 응답');
+  const parsed = JSON.parse(content) as { recipes: RecommendedRecipe[] };
+  return parsed.recipes;
+}
+
 export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
   const response = await getOpenAI().chat.completions.create({
     model: getModel(),
