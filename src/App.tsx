@@ -7,20 +7,23 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, ShoppingBag, UserCircle, AlertCircle, AlertTriangle,
   X, Plus, CheckCircle, Camera, Utensils, Receipt, ChefHat, RefreshCw, Info, Milk, Package, Leaf, Egg, Apple, Send, Wand2, Beef, Mic, Bookmark, LogOut
 } from 'lucide-react';
 import { useAuth } from './hooks/useAuth';
+import { addIngredients, deleteIngredient, subscribeIngredients } from './lib/db';
+import {
+  daysLeft as calcDaysLeft,
+  INGREDIENT_CATEGORIES,
+  type Ingredient,
+  type IngredientCategory,
+  type NewIngredient,
+} from './types';
 
-interface Ingredient {
-  id: string;
-  name: string;
-  category: string;
-  daysLeft: number;
-}
+type IngredientVM = Ingredient & { daysLeft: number };
 
 const LoginView: React.FC<{ onLogin: () => Promise<void>; error: string | null }> = ({ onLogin, error }) => {
   const [pending, setPending] = useState(false);
@@ -65,7 +68,7 @@ const LoginView: React.FC<{ onLogin: () => Promise<void>; error: string | null }
   );
 };
 
-const EmptyHome = ({ onUpload }: { onUpload: () => void }) => (
+const EmptyHome = ({ onUpload, onManualAdd }: { onUpload: () => void, onManualAdd: () => void }) => (
   <div className="flex-1 flex flex-col items-center justify-center p-5 pb-32">
     <div className="w-full max-w-md flex flex-col items-center text-center space-y-8">
       <div className="w-48 h-48 bg-surface-container-high rounded-full flex items-center justify-center shadow-sm relative mb-4">
@@ -82,7 +85,7 @@ const EmptyHome = ({ onUpload }: { onUpload: () => void }) => (
       >
         <Receipt size={20} /> 영수증 올리기
       </button>
-      <button className="w-full h-14 bg-transparent border-2 border-primary text-primary rounded-xl font-semibold hover:bg-primary/5 transition-colors">
+      <button onClick={onManualAdd} className="w-full h-14 bg-transparent border-2 border-primary text-primary rounded-xl font-semibold hover:bg-primary/5 transition-colors">
         직접 입력하기
       </button>
     </div>
@@ -101,8 +104,8 @@ const ItemIcon = ({ category }: { category: string }) => {
   }
 }
 
-const PopulatedHome = ({ ingredients, onUpload, onRecipe, onDelete }: { ingredients: Ingredient[], onUpload: () => void, onRecipe: () => void, onDelete: (id: string) => void }) => {
-  const [deleteTarget, setDeleteTarget] = React.useState<Ingredient | null>(null);
+const PopulatedHome = ({ ingredients, onUpload, onRecipe, onDelete, onManualAdd }: { ingredients: IngredientVM[], onUpload: () => void, onRecipe: () => void, onDelete: (id: string) => void, onManualAdd: () => void }) => {
+  const [deleteTarget, setDeleteTarget] = React.useState<IngredientVM | null>(null);
   const [activeCategory, setActiveCategory] = React.useState<string>('전체');
   
   const categories = ['전체', ...Array.from(new Set(ingredients.map(i => i.category)))];
@@ -138,7 +141,9 @@ const PopulatedHome = ({ ingredients, onUpload, onRecipe, onDelete }: { ingredie
       <section className="space-y-4">
         <div className="flex justify-between items-end">
           <h2 className="text-xl font-semibold">내 재료</h2>
-          <span className="text-sm text-on-surface-variant cursor-pointer">전체보기</span>
+          <button onClick={onManualAdd} className="text-sm text-primary font-semibold flex items-center gap-1">
+            <Plus size={16} /> 직접 추가
+          </button>
         </div>
 
         <div className="flex overflow-x-auto gap-2 pb-1 -mx-5 px-5 snap-x" style={{ scrollbarWidth: 'none' }}>
@@ -237,21 +242,117 @@ const PopulatedHome = ({ ingredients, onUpload, onRecipe, onDelete }: { ingredie
   );
 }
 
-const ReceiptView = ({ onSave, onBack }: { onSave: () => void, onBack: () => void }) => {
-  const [items, setItems] = useState([
-    { id: '1', name: '서울우유 1L', days: 7 },
-    { id: '2', name: '국산콩 두부 300g', days: 14 },
-    { id: '3', name: '리코타 치즈 샐러드', days: 3 },
-    { id: '4', name: '무항생제 계란 15구', days: 21 },
+const AddIngredientModal = ({ onClose, onAdd }: { onClose: () => void, onAdd: (item: NewIngredient) => Promise<void> }) => {
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState<IngredientCategory>('채소류');
+  const [days, setDays] = useState(7);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    try {
+      await onAdd({ name: name.trim(), category, shelfLifeDays: days });
+      onClose();
+    } catch (e) {
+      console.error('재료 추가 실패:', e);
+      alert('재료 추가에 실패했어요. 잠시 후 다시 시도해주세요.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center px-5 bg-black/40 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="bg-surface w-full max-w-sm rounded-2xl p-6 shadow-xl flex flex-col gap-5"
+      >
+        <h3 className="text-xl font-bold text-on-surface text-center">재료 직접 추가</h3>
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-on-surface-variant">재료 이름</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+              placeholder="예: 애호박"
+              autoFocus
+              className="w-full h-12 bg-white rounded-xl px-4 border border-outline-variant focus:ring-1 focus:ring-primary outline-none"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-on-surface-variant">카테고리</label>
+            <div className="flex flex-wrap gap-2">
+              {INGREDIENT_CATEGORIES.map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setCategory(cat)}
+                  className={`px-3 py-2 rounded-full text-sm font-semibold transition-colors ${category === cat ? 'bg-primary text-white' : 'bg-white text-on-surface-variant border border-outline-variant'}`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-on-surface-variant">예상 보관일수 (일)</label>
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={days}
+              onChange={(e) => setDays(Math.max(1, Number(e.target.value) || 1))}
+              className="w-full h-12 bg-white rounded-xl px-4 border border-outline-variant focus:ring-1 focus:ring-primary outline-none"
+            />
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 h-12 rounded-xl bg-surface-container-high text-on-surface font-semibold hover:bg-surface-dim transition-colors">
+            취소
+          </button>
+          <button onClick={submit} disabled={!name.trim() || saving} className="flex-1 h-12 rounded-xl bg-primary text-white font-semibold disabled:opacity-50 hover:bg-primary/90 transition-colors">
+            {saving ? '추가 중...' : '추가하기'}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+type ReceiptItem = { id: string; name: string; days: number; category: IngredientCategory };
+
+const ReceiptView = ({ onSave, onBack }: { onSave: (items: NewIngredient[]) => Promise<void>, onBack: () => void }) => {
+  const [items, setItems] = useState<ReceiptItem[]>([
+    { id: '1', name: '서울우유 1L', days: 7, category: '유제품' },
+    { id: '2', name: '국산콩 두부 300g', days: 14, category: '콩류' },
+    { id: '3', name: '리코타 치즈 샐러드', days: 3, category: '채소류' },
+    { id: '4', name: '무항생제 계란 15구', days: 21, category: '기타' },
   ]);
   const [isListening, setIsListening] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const handleVoiceInput = () => {
     setIsListening(true);
     setTimeout(() => {
-      setItems([...items, { id: Date.now().toString(), name: '당근 1개', days: 10 }]);
+      setItems([...items, { id: Date.now().toString(), name: '당근 1개', days: 10, category: '채소류' }]);
       setIsListening(false);
     }, 2000);
+  };
+
+  const handleSave = async () => {
+    if (saving || items.length === 0) return;
+    setSaving(true);
+    try {
+      await onSave(items.map(i => ({ name: i.name, category: i.category, shelfLifeDays: i.days })));
+    } catch (e) {
+      console.error('재료 저장 실패:', e);
+      alert('저장에 실패했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -327,8 +428,8 @@ const ReceiptView = ({ onSave, onBack }: { onSave: () => void, onBack: () => voi
       </main>
 
       <div className="fixed bottom-0 left-0 w-full max-w-md mx-auto md:left-1/2 md:-translate-x-1/2 bg-surface/90 backdrop-blur-md p-5 border-t border-surface-variant z-40">
-        <button onClick={onSave} className="w-full bg-primary text-white h-14 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 hover:bg-primary/90">
-          <CheckCircle size={20} /> 이대로 저장하기
+        <button onClick={handleSave} disabled={saving} className="w-full bg-primary text-white h-14 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-60">
+          <CheckCircle size={20} /> {saving ? '저장 중...' : '이대로 저장하기'}
         </button>
       </div>
     </div>
@@ -678,8 +779,19 @@ export default function App() {
   const { user, loading: authLoading, error: authError, login, logout } = useAuth();
   const [view, setView] = useState<'home'|'receipt'|'recipe'|'saved'>('home');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [savedRecipes, setSavedRecipes] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (!user) {
+      setIngredients([]);
+      return;
+    }
+    return subscribeIngredients(user.uid, setIngredients, (e) => console.error('재료 구독 실패:', e));
+  }, [user?.uid]);
+
+  const ingredientVMs: IngredientVM[] = ingredients.map(i => ({ ...i, daysLeft: calcDaysLeft(i.expiresAt) }));
 
   const toggleSave = (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -692,21 +804,23 @@ export default function App() {
     await logout();
   };
 
-  const handleSaveReceipt = () => {
-    setIngredients([
-      { id: '1', name: '우유', category: '유제품', daysLeft: 2 },
-      { id: '2', name: '두부', category: '콩류', daysLeft: 1 },
-      { id: '3', name: '샐러드', category: '채소류', daysLeft: 0 },
-      { id: '4', name: '계란', category: '기타', daysLeft: 5 },
-      { id: '5', name: '사과', category: '과일', daysLeft: 10 },
-      { id: '6', name: '고구마', category: '채소류', daysLeft: 14 },
-      { id: '7', name: '닭가슴살', category: '육류', daysLeft: 3 },
-      { id: '8', name: '청양고추', category: '채소류', daysLeft: 7 },
-      { id: '9', name: '소면', category: '기타', daysLeft: 300 },
-      { id: '10', name: '체다치즈', category: '유제품', daysLeft: 20 },
-      { id: '11', name: '마늘', category: '채소류', daysLeft: 15 },
-    ]);
+  const handleSaveReceipt = async (items: NewIngredient[]) => {
+    if (!user) return;
+    await addIngredients(user.uid, items);
     setView('home');
+  };
+
+  const handleAddIngredient = async (item: NewIngredient) => {
+    if (!user) return;
+    await addIngredients(user.uid, [item]);
+  };
+
+  const handleDeleteIngredient = (id: string) => {
+    if (!user) return;
+    deleteIngredient(user.uid, id).catch((e) => {
+      console.error('재료 삭제 실패:', e);
+      alert('삭제에 실패했어요. 잠시 후 다시 시도해주세요.');
+    });
   };
 
   if (authLoading) {
@@ -762,14 +876,15 @@ export default function App() {
               </div>
             </header>
             
-            {ingredients.length === 0 ? (
-              <EmptyHome onUpload={() => setView('receipt')} />
+            {ingredientVMs.length === 0 ? (
+              <EmptyHome onUpload={() => setView('receipt')} onManualAdd={() => setShowAddModal(true)} />
             ) : (
-              <PopulatedHome 
-                ingredients={ingredients} 
+              <PopulatedHome
+                ingredients={ingredientVMs}
                 onUpload={() => setView('receipt')}
                 onRecipe={() => setView('recipe')}
-                onDelete={(id) => setIngredients(prev => prev.filter(item => item.id !== id))}
+                onDelete={handleDeleteIngredient}
+                onManualAdd={() => setShowAddModal(true)}
               />
             )}
           </motion.div>
@@ -806,6 +921,11 @@ export default function App() {
           >
              <SavedView onBack={() => setView('home')} savedRecipes={savedRecipes} toggleSave={toggleSave} />
           </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {user && showAddModal && (
+          <AddIngredientModal onClose={() => setShowAddModal(false)} onAdd={handleAddIngredient} />
         )}
       </AnimatePresence>
     </div>
