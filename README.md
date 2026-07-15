@@ -1,20 +1,52 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# 냉털메이트 🧊
 
-# Run and deploy your AI Studio app
+영수증만 올리면, 오늘 뭐 먹을지 정해드려요. 냉장고 재료 관리 + AI 레시피 추천 서비스.
 
-This contains everything you need to run your app locally.
+## 기능
 
-View your app in AI Studio: https://ai.studio/apps/d580a05c-e2b8-4404-ad84-b90e216876c3
+- **구글 로그인** — Firebase Auth
+- **재료 관리** — Firestore 실시간 동기화, 직접 추가/삭제, 유통기한 D-day 관리
+- **영수증 인식** — 영수증 사진을 올리면 OpenAI Vision이 식재료·카테고리·예상 보관일수를 추출
+- **AI 레시피 추천** — 냉장고 재료(임박 재료 우선) 기반 추천, 자유 프롬프트/카테고리 필터/재추천
+- **커뮤니티/셀럽 레시피** — Firestore `recipes` 컬렉션, 좋아요/북마크
+- **저장한 레시피** — `users/{uid}/saved`에 스냅샷 저장
 
-## Run Locally
+## 아키텍처
 
-**Prerequisites:**  Node.js
+```
+브라우저 (Vite + React SPA)
+ ├─ Firebase Auth / Firestore ── 직접 연결 (firestore.rules로 보호)
+ └─ /api/* (Vercel Functions) ── OpenAI 프록시 (API 키는 서버에만 존재)
+      ├─ POST /api/receipt-scan   영수증 이미지 → 재료 목록
+      └─ POST /api/recommend      재료 목록 → 레시피 추천
+```
 
+API 함수는 Firebase ID 토큰을 검증(`jose`)한 뒤에만 OpenAI를 호출한다.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## 로컬 개발
+
+```bash
+npm install
+cp .env.example .env   # 값 채우기 (OpenAI 키, Firebase 설정)
+npm run dev:api        # 터미널 1: 로컬 API 서버 (:3001)
+npm run dev            # 터미널 2: Vite (:3000, /api는 :3001로 프록시)
+```
+
+- Firebase 설정값은 `firebase-applet-config.json` 참고 (`firestoreDatabaseId`가 비기본 DB이므로 `VITE_FIREBASE_DATABASE_ID` 필수)
+- 검증 스크립트: `npx tsx scripts/test-scan.ts <영수증 이미지>` / `npx tsx scripts/test-recommend.ts "프롬프트"`
+
+## 배포 (Vercel)
+
+```bash
+npx vercel link
+npx vercel env add OPENAI_API_KEY production   # .env의 값들 등록
+npx vercel --prod
+```
+
+환경변수: `OPENAI_API_KEY`, `OPENAI_MODEL`, `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_DATABASE_ID`
+
+배포 후 체크리스트:
+
+1. Firebase 콘솔 → Authentication → Settings → **승인된 도메인**에 배포 도메인 추가
+2. Firebase 콘솔 → Firestore(해당 데이터베이스) → 규칙에 `firestore.rules` 내용 반영
+3. 프로덕션 URL에서 로그인 → 재료 추가 → 영수증 스캔 → 추천 → 북마크 전체 플로우 확인
