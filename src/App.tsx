@@ -11,9 +11,11 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, ShoppingBag, UserCircle, AlertCircle, AlertTriangle,
-  X, Plus, CheckCircle, Camera, Utensils, Receipt, ChefHat, RefreshCw, Info, Milk, Package, Leaf, Egg, Apple, Send, Wand2, Beef, Mic, Bookmark, LogOut
+  X, Plus, CheckCircle, Camera, Utensils, Receipt, ChefHat, RefreshCw, Info, Milk, Package, Leaf, Egg, Apple, Send, Wand2, Beef, Bookmark, LogOut
 } from 'lucide-react';
 import { useAuth } from './hooks/useAuth';
+import { scanReceipt } from './lib/api';
+import { fileToCompressedDataUrl } from './lib/image';
 import { addIngredients, deleteIngredient, subscribeIngredients } from './lib/db';
 import {
   daysLeft as calcDaysLeft,
@@ -325,28 +327,57 @@ const AddIngredientModal = ({ onClose, onAdd }: { onClose: () => void, onAdd: (i
 type ReceiptItem = { id: string; name: string; days: number; category: IngredientCategory };
 
 const ReceiptView = ({ onSave, onBack }: { onSave: (items: NewIngredient[]) => Promise<void>, onBack: () => void }) => {
-  const [items, setItems] = useState<ReceiptItem[]>([
-    { id: '1', name: '서울우유 1L', days: 7, category: '유제품' },
-    { id: '2', name: '국산콩 두부 300g', days: 14, category: '콩류' },
-    { id: '3', name: '리코타 치즈 샐러드', days: 3, category: '채소류' },
-    { id: '4', name: '무항생제 계란 15구', days: 21, category: '기타' },
-  ]);
-  const [isListening, setIsListening] = useState(false);
+  const [items, setItems] = useState<ReceiptItem[]>([]);
   const [saving, setSaving] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const handleVoiceInput = () => {
-    setIsListening(true);
-    setTimeout(() => {
-      setItems([...items, { id: Date.now().toString(), name: '당근 1개', days: 10, category: '채소류' }]);
-      setIsListening(false);
-    }, 2000);
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setScanning(true);
+    setScanError(null);
+    try {
+      const dataUrl = await fileToCompressedDataUrl(file);
+      setPreviewUrl(dataUrl);
+      const scanned = await scanReceipt(dataUrl);
+      if (scanned.length === 0) {
+        setScanError('영수증에서 식재료를 찾지 못했어요. 다른 사진으로 시도해보세요.');
+      }
+      setItems(scanned.map((s, idx) => ({
+        id: `${Date.now()}-${idx}`,
+        name: s.name,
+        category: s.category,
+        days: s.shelfLifeDays,
+      })));
+    } catch (err) {
+      console.error('영수증 인식 실패:', err);
+      setScanError(err instanceof Error ? err.message : '영수증 인식에 실패했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setScanning(false);
+    }
   };
 
+  const updateItem = (id: string, patch: Partial<ReceiptItem>) => {
+    setItems(prev => prev.map(item => item.id === id ? { ...item, ...patch } : item));
+  };
+
+  const removeItem = (id: string) => setItems(prev => prev.filter(item => item.id !== id));
+
+  const addEmptyItem = () => {
+    setItems(prev => [...prev, { id: `${Date.now()}`, name: '', days: 7, category: '기타' }]);
+  };
+
+  const validItems = items.filter(i => i.name.trim().length > 0);
+
   const handleSave = async () => {
-    if (saving || items.length === 0) return;
+    if (saving || validItems.length === 0) return;
     setSaving(true);
     try {
-      await onSave(items.map(i => ({ name: i.name, category: i.category, shelfLifeDays: i.days })));
+      await onSave(validItems.map(i => ({ name: i.name.trim(), category: i.category, shelfLifeDays: i.days })));
     } catch (e) {
       console.error('재료 저장 실패:', e);
       alert('저장에 실패했어요. 잠시 후 다시 시도해주세요.');
@@ -367,18 +398,40 @@ const ReceiptView = ({ onSave, onBack }: { onSave: (items: NewIngredient[]) => P
 
       <main className="flex-1 flex flex-col pb-32 overflow-y-auto max-w-md mx-auto w-full">
         <section className="px-5 py-8 bg-surface-container-low flex flex-col items-center justify-center rounded-b-2xl mb-6">
-          <button className="w-full bg-primary text-white h-14 rounded-xl flex items-center justify-center gap-2 shadow-sm hover:bg-primary/90">
-            <Receipt size={24} />
-            <span className="font-semibold text-lg">영수증 올리기</span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={scanning}
+            className="w-full bg-primary text-white h-14 rounded-xl flex items-center justify-center gap-2 shadow-sm hover:bg-primary/90 disabled:opacity-60"
+          >
+            {scanning ? <RefreshCw size={24} className="animate-spin" /> : <Camera size={24} />}
+            <span className="font-semibold text-lg">{scanning ? '인식 중...' : previewUrl ? '다른 영수증 올리기' : '영수증 올리기'}</span>
           </button>
-          
+
           <div className="mt-6 w-3/4 aspect-[2/3] border-2 border-dashed border-outline-variant rounded-xl overflow-hidden bg-white flex items-center justify-center relative shadow-inner">
-             <img src="https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=400&q=80" alt="Receipt Preview" className="w-full h-full object-cover opacity-60 grayscale" />
-             <div className="absolute inset-0 flex flex-col items-center justify-center">
-               <Receipt size={40} className="mb-2 text-outline" />
-               <p className="text-sm font-medium text-outline">최근 등록된 영수증</p>
-             </div>
+            {previewUrl ? (
+              <img src={previewUrl} alt="업로드한 영수증" className={`w-full h-full object-cover ${scanning ? 'opacity-50' : ''}`} />
+            ) : (
+              <div className="flex flex-col items-center justify-center p-4 text-center">
+                <Receipt size={40} className="mb-2 text-outline" />
+                <p className="text-sm font-medium text-outline">영수증 사진을 올리면<br />AI가 재료를 인식해요</p>
+              </div>
+            )}
+            {scanning && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/60">
+                <RefreshCw size={32} className="animate-spin text-primary mb-2" />
+                <p className="text-sm font-semibold text-primary">재료를 인식하고 있어요...</p>
+              </div>
+            )}
           </div>
+          {scanError && <p className="mt-4 text-sm text-error text-center">{scanError}</p>}
         </section>
 
         <section className="px-5 flex flex-col gap-4">
@@ -387,48 +440,55 @@ const ReceiptView = ({ onSave, onBack }: { onSave: (items: NewIngredient[]) => P
             <span className="text-xs text-outline">(수정할 수 있어요)</span>
           </div>
 
-          <div className="flex flex-col gap-3">
-            {items.map((item, idx) => (
-              <div key={item.id} className="bg-white rounded-xl p-4 flex items-center gap-3 shadow-sm border border-surface-variant">
-                <div className="flex-1">
-                  <input 
-                    type="text" 
-                    value={item.name} 
-                    onChange={(e) => {
-                      const newItems = [...items];
-                      newItems[idx].name = e.target.value;
-                      setItems(newItems);
-                    }}
-                    className="w-full bg-surface-container-low rounded-lg px-3 py-2 border-none focus:ring-1 focus:ring-primary outline-none"
+          {items.length === 0 && !scanning ? (
+            <p className="text-sm text-outline text-center py-6">아직 인식된 재료가 없어요.<br />영수증을 올리거나 직접 추가해보세요.</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {items.map((item) => (
+                <div key={item.id} className="bg-white rounded-xl p-3 flex items-center gap-2 shadow-sm border border-surface-variant">
+                  <input
+                    type="text"
+                    value={item.name}
+                    placeholder="재료 이름"
+                    onChange={(e) => updateItem(item.id, { name: e.target.value })}
+                    className="flex-1 min-w-0 bg-surface-container-low rounded-lg px-3 py-2 border-none focus:ring-1 focus:ring-primary outline-none"
                   />
+                  <select
+                    value={item.category}
+                    onChange={(e) => updateItem(item.id, { category: e.target.value as IngredientCategory })}
+                    className="text-xs bg-surface-container-low rounded-lg px-2 py-2.5 border-none outline-none"
+                  >
+                    {INGREDIENT_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                  </select>
+                  <div className={`flex items-center px-2 py-1 rounded-full text-xs font-bold whitespace-nowrap ${item.days <= 3 ? 'bg-error-container text-on-error-container' : item.days <= 7 ? 'bg-primary-container text-on-primary-container' : 'bg-surface-container-high text-on-surface-variant'}`}>
+                    D-
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={item.days}
+                      onChange={(e) => updateItem(item.id, { days: Math.max(1, Number(e.target.value) || 1) })}
+                      className="w-10 bg-transparent border-none outline-none text-xs font-bold"
+                    />
+                  </div>
+                  <button onClick={() => removeItem(item.id)} className="p-1 text-outline-variant hover:text-error">
+                    <X size={20} />
+                  </button>
                 </div>
-                <div className={`px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap ${item.days <= 3 ? 'bg-error-container text-on-error-container' : item.days <= 7 ? 'bg-primary-container text-on-primary-container' : 'bg-surface-container-high text-on-surface-variant'}`}>
-                  D-{item.days}
-                </div>
-                <button className="p-1 text-outline-variant hover:text-error">
-                  <X size={20} />
-                </button>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
-          <div className="mt-3 flex gap-2">
-            <button className="flex-1 flex items-center justify-center gap-1 py-4 text-primary font-semibold rounded-xl border-2 border-dashed border-primary bg-white hover:bg-primary/5">
+          <div className="mt-3">
+            <button onClick={addEmptyItem} className="w-full flex items-center justify-center gap-1 py-4 text-primary font-semibold rounded-xl border-2 border-dashed border-primary bg-white hover:bg-primary/5">
               <Plus size={20} /> 직접 추가
-            </button>
-            <button onClick={handleVoiceInput} className="flex-1 flex items-center justify-center gap-1 py-4 text-primary font-semibold rounded-xl border-2 border-dashed border-primary bg-white hover:bg-primary/5">
-              {isListening ? (
-                <span className="animate-pulse flex items-center gap-1"><Mic size={20} /> 듣는 중...</span>
-              ) : (
-                <span className="flex items-center gap-1"><Mic size={20} /> 음성 추가</span>
-              )}
             </button>
           </div>
         </section>
       </main>
 
       <div className="fixed bottom-0 left-0 w-full max-w-md mx-auto md:left-1/2 md:-translate-x-1/2 bg-surface/90 backdrop-blur-md p-5 border-t border-surface-variant z-40">
-        <button onClick={handleSave} disabled={saving} className="w-full bg-primary text-white h-14 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-60">
+        <button onClick={handleSave} disabled={saving || scanning || validItems.length === 0} className="w-full bg-primary text-white h-14 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-60">
           <CheckCircle size={20} /> {saving ? '저장 중...' : '이대로 저장하기'}
         </button>
       </div>
