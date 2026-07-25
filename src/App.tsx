@@ -18,18 +18,23 @@ import { scanReceipt } from './lib/api';
 import { fileToCompressedDataUrl } from './lib/image';
 import {
   addIngredients,
+  consumeIngredients,
   deleteIngredient,
+  logConsumption,
   saveRecipe,
   subscribeIngredients,
+  subscribeMonthlyStats,
   subscribeSavedRecipes,
   unsaveRecipe,
 } from './lib/db';
 import {
   daysLeft as calcDaysLeft,
   INGREDIENT_CATEGORIES,
+  type ConsumptionAction,
   type Ingredient,
   type IngredientCategory,
   type IngredientVM,
+  type MonthlyStats,
   type NewIngredient,
   type SavedRecipe,
   type SavedRecipeInput,
@@ -116,16 +121,33 @@ const ItemIcon = ({ category }: { category: string }) => {
   }
 }
 
-const PopulatedHome = ({ ingredients, onUpload, onRecipe, onDelete, onManualAdd }: { ingredients: IngredientVM[], onUpload: () => void, onRecipe: () => void, onDelete: (id: string) => void, onManualAdd: () => void }) => {
-  const [deleteTarget, setDeleteTarget] = React.useState<IngredientVM | null>(null);
+const PopulatedHome = ({ ingredients, stats, onUpload, onRecipe, onRemove, onManualAdd }: { ingredients: IngredientVM[], stats: MonthlyStats, onUpload: () => void, onRecipe: () => void, onRemove: (item: IngredientVM, action: ConsumptionAction) => void, onManualAdd: () => void }) => {
+  const [removeTarget, setRemoveTarget] = React.useState<IngredientVM | null>(null);
   const [activeCategory, setActiveCategory] = React.useState<string>('전체');
-  
+
   const categories = ['전체', ...Array.from(new Set(ingredients.map(i => i.category)))];
   const filteredIngredients = activeCategory === '전체' ? ingredients : ingredients.filter(i => i.category === activeCategory);
   const urgent = ingredients.filter(i => i.daysLeft <= 2).sort((a,b) => a.daysLeft - b.daysLeft);
-  
+  const totalHandled = stats.cooked + stats.discarded;
+  const activeRate = totalHandled > 0 ? Math.round((stats.cooked / totalHandled) * 100) : 0;
+
   return (
     <div className="flex-1 px-5 py-6 space-y-8 pb-32 max-w-2xl mx-auto w-full">
+      {totalHandled > 0 && (
+        <section className="bg-white shadow-sm rounded-2xl p-5 flex items-center justify-between">
+          <div>
+            <p className="text-sm text-on-surface-variant">이번 달 냉장고 성적표</p>
+            <p className="text-lg font-bold text-on-surface mt-0.5">
+              살린 재료 <span className="text-primary">{stats.cooked}</span> · 버린 재료 <span className="text-error">{stats.discarded}</span>
+            </p>
+          </div>
+          <div className="text-center shrink-0 pl-4">
+            <div className="text-2xl font-bold text-primary leading-none">{activeRate}%</div>
+            <div className="text-xs text-on-surface-variant mt-1">활용률</div>
+          </div>
+        </section>
+      )}
+
       <section className="space-y-4">
         <h2 className="text-xl font-semibold flex items-center gap-2 text-on-surface">
           <AlertCircle className="text-error" size={24} /> 곧 먹어야 해요
@@ -199,7 +221,7 @@ const PopulatedHome = ({ ingredients, onUpload, onRecipe, onDelete, onManualAdd 
                   </div>
                 </div>
               </div>
-              <button onClick={() => setDeleteTarget(item)} className="text-outline hover:text-error p-2">
+              <button onClick={() => setRemoveTarget(item)} className="text-outline hover:text-error p-2" aria-label={`${item.name} 정리`}>
                 <X size={20} />
               </button>
             </div>
@@ -220,30 +242,38 @@ const PopulatedHome = ({ ingredients, onUpload, onRecipe, onDelete, onManualAdd 
       </div>
 
       <AnimatePresence>
-        {deleteTarget && (
+        {removeTarget && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center px-5 bg-black/40 backdrop-blur-sm">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-surface w-full max-w-sm rounded-2xl p-6 shadow-xl flex flex-col gap-6"
             >
               <div className="space-y-2 text-center">
-                <h3 className="text-xl font-bold text-on-surface">재료 삭제</h3>
-                <p className="text-on-surface-variant">정말 <span className="font-semibold text-primary">{deleteTarget.name}</span>을(를) 삭제하시겠습니까?</p>
+                <h3 className="text-xl font-bold text-on-surface">
+                  <span className="text-primary">{removeTarget.name}</span> 어떻게 됐어요?
+                </h3>
+                <p className="text-sm text-on-surface-variant">기록해두면 이번 달 활용률에 반영돼요.</p>
               </div>
-              <div className="flex gap-3">
-                <button 
-                  onClick={() => setDeleteTarget(null)} 
-                  className="flex-1 h-12 rounded-xl bg-surface-container-high text-on-surface font-semibold hover:bg-surface-dim transition-colors"
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => { onRemove(removeTarget, 'cooked'); setRemoveTarget(null); }}
+                  className="w-full h-12 rounded-xl bg-primary text-white font-semibold hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+                >
+                  🍽️ 다 먹었어요
+                </button>
+                <button
+                  onClick={() => { onRemove(removeTarget, 'discarded'); setRemoveTarget(null); }}
+                  className="w-full h-12 rounded-xl bg-error-container text-on-error-container font-semibold hover:bg-error-container/80 transition-colors flex items-center justify-center gap-2"
+                >
+                  🗑️ 상해서 버렸어요
+                </button>
+                <button
+                  onClick={() => setRemoveTarget(null)}
+                  className="w-full h-11 rounded-xl text-on-surface-variant font-medium hover:bg-surface-container-high transition-colors"
                 >
                   취소
-                </button>
-                <button 
-                  onClick={() => { onDelete(deleteTarget.id); setDeleteTarget(null); }} 
-                  className="flex-1 h-12 rounded-xl bg-error text-white font-semibold hover:bg-error/90 transition-colors"
-                >
-                  삭제
                 </button>
               </div>
             </motion.div>
@@ -513,18 +543,22 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
+  const [monthlyStats, setMonthlyStats] = useState<MonthlyStats>({ cooked: 0, discarded: 0 });
 
   useEffect(() => {
     if (!user) {
       setIngredients([]);
       setSavedRecipes([]);
+      setMonthlyStats({ cooked: 0, discarded: 0 });
       return;
     }
     const unsubIngredients = subscribeIngredients(user.uid, setIngredients, (e) => console.error('재료 구독 실패:', e));
     const unsubSaved = subscribeSavedRecipes(user.uid, setSavedRecipes, (e) => console.error('저장 레시피 구독 실패:', e));
+    const unsubStats = subscribeMonthlyStats(user.uid, setMonthlyStats, (e) => console.error('소비 통계 구독 실패:', e));
     return () => {
       unsubIngredients();
       unsubSaved();
+      unsubStats();
     };
   }, [user?.uid]);
 
@@ -560,12 +594,23 @@ export default function App() {
     await addIngredients(user.uid, [item]);
   };
 
-  const handleDeleteIngredient = (id: string) => {
+  const handleRemoveIngredient = (item: IngredientVM, action: ConsumptionAction) => {
     if (!user) return;
-    deleteIngredient(user.uid, id).catch((e) => {
-      console.error('재료 삭제 실패:', e);
-      alert('삭제에 실패했어요. 잠시 후 다시 시도해주세요.');
-    });
+    const uid = user.uid;
+    // 신호(먹음/버림)를 먼저 남기고 재고에서 제거한다
+    logConsumption(uid, { name: item.name, category: item.category, action })
+      .catch((e) => console.error('소비 기록 실패:', e))
+      .finally(() => {
+        deleteIngredient(uid, item.id).catch((e) => {
+          console.error('재료 삭제 실패:', e);
+          alert('삭제에 실패했어요. 잠시 후 다시 시도해주세요.');
+        });
+      });
+  };
+
+  const handleCook = async (items: { id: string; name: string; category: IngredientCategory }[]) => {
+    if (!user) return;
+    await consumeIngredients(user.uid, items);
   };
 
   if (authLoading) {
@@ -626,9 +671,10 @@ export default function App() {
             ) : (
               <PopulatedHome
                 ingredients={ingredientVMs}
+                stats={monthlyStats}
                 onUpload={() => setView('receipt')}
                 onRecipe={() => setView('recipe')}
-                onDelete={handleDeleteIngredient}
+                onRemove={handleRemoveIngredient}
                 onManualAdd={() => setShowAddModal(true)}
               />
             )}
@@ -653,7 +699,7 @@ export default function App() {
             exit={{ opacity: 0, scale: 0.95 }}
             className="flex-1 w-full"
           >
-             <RecipeView onBack={() => setView('home')} ingredients={ingredientVMs} savedTitles={savedTitles} onToggleSave={toggleSave} />
+             <RecipeView onBack={() => setView('home')} ingredients={ingredientVMs} savedTitles={savedTitles} onToggleSave={toggleSave} onCook={handleCook} />
           </motion.div>
         )}
         {user && view === 'saved' && (
@@ -664,7 +710,7 @@ export default function App() {
             exit={{ opacity: 0, x: -20 }}
             className="flex-1 w-full"
           >
-             <SavedView onBack={() => setView('home')} savedRecipes={savedRecipes} onToggleSave={toggleSave} />
+             <SavedView onBack={() => setView('home')} savedRecipes={savedRecipes} ingredients={ingredientVMs} onToggleSave={toggleSave} onCook={handleCook} />
           </motion.div>
         )}
       </AnimatePresence>

@@ -16,13 +16,21 @@ export interface NewIngredient {
 
 export type IngredientVM = Ingredient & { daysLeft: number };
 
+export interface RecipeIngredient {
+  name: string;
+  amount: string;
+}
+
 export interface RecommendedRecipe {
   title: string;
   time: string;
   difficulty: string;
+  servings: string;
   warning: string;
   warningType: 'alert' | 'info';
   tags: string[];
+  usedIngredients: RecipeIngredient[];
+  steps: string[];
   substitutes: { missing: string; replaceWith: string }[];
 }
 
@@ -36,9 +44,21 @@ export interface SavedRecipe {
   difficulty: string;
   author: string;
   tags: string[];
+  // AI 추천 레시피는 조리법을 함께 저장해 나중에 다시 볼 수 있게 한다 (커뮤니티/셀럽은 없음)
+  servings?: string;
+  usedIngredients?: RecipeIngredient[];
+  steps?: string[];
 }
 
 export type SavedRecipeInput = Omit<SavedRecipe, 'id'>;
+
+// 재료가 재고에서 빠질 때 남기는 신호: 요리에 썼거나(cooked) 상해서 버렸거나(discarded)
+export type ConsumptionAction = 'cooked' | 'discarded';
+
+export interface MonthlyStats {
+  cooked: number;
+  discarded: number;
+}
 
 export interface CommunityRecipe {
   id: string;
