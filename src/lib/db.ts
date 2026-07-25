@@ -169,6 +169,27 @@ export async function deleteIngredient(uid: string, id: string) {
   await deleteDoc(doc(ingredientsCol(uid), id));
 }
 
+// 임박 재료 알림 수신 여부는 users/{uid} 문서의 notifyExpiry 필드로 관리한다
+export function subscribeNotifyExpiry(
+  uid: string,
+  onChange: (enabled: boolean) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => onChange(snap.data()?.notifyExpiry === true),
+    onError,
+  );
+}
+
+export async function setNotifyExpiry(uid: string, enabled: boolean) {
+  await setDoc(
+    doc(db, 'users', uid),
+    { notifyExpiry: enabled, updatedAt: serverTimestamp() },
+    { merge: true },
+  );
+}
+
 const logCol = (uid: string) => collection(db, 'users', uid, 'log');
 
 // 재료 소비 신호 한 건 기록 (요리/폐기). 삭제 플로우에서 사용한다.

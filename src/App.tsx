@@ -11,7 +11,7 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, ShoppingBag, UserCircle, AlertCircle,
-  X, Plus, CheckCircle, Camera, Utensils, Receipt, RefreshCw, Milk, Package, Leaf, Egg, Apple, Beef, Bookmark, LogOut
+  X, Plus, CheckCircle, Camera, Utensils, Receipt, RefreshCw, Milk, Package, Leaf, Egg, Apple, Beef, Bookmark, LogOut, Bell
 } from 'lucide-react';
 import { useAuth } from './hooks/useAuth';
 import { scanReceipt } from './lib/api';
@@ -22,8 +22,10 @@ import {
   deleteIngredient,
   logConsumption,
   saveRecipe,
+  setNotifyExpiry,
   subscribeIngredients,
   subscribeMonthlyStats,
+  subscribeNotifyExpiry,
   subscribeSavedRecipes,
   unsaveRecipe,
 } from './lib/db';
@@ -544,21 +546,25 @@ export default function App() {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
   const [monthlyStats, setMonthlyStats] = useState<MonthlyStats>({ cooked: 0, discarded: 0 });
+  const [notifyExpiry, setNotifyExpiryState] = useState(false);
 
   useEffect(() => {
     if (!user) {
       setIngredients([]);
       setSavedRecipes([]);
       setMonthlyStats({ cooked: 0, discarded: 0 });
+      setNotifyExpiryState(false);
       return;
     }
     const unsubIngredients = subscribeIngredients(user.uid, setIngredients, (e) => console.error('재료 구독 실패:', e));
     const unsubSaved = subscribeSavedRecipes(user.uid, setSavedRecipes, (e) => console.error('저장 레시피 구독 실패:', e));
     const unsubStats = subscribeMonthlyStats(user.uid, setMonthlyStats, (e) => console.error('소비 통계 구독 실패:', e));
+    const unsubNotify = subscribeNotifyExpiry(user.uid, setNotifyExpiryState, (e) => console.error('알림 설정 구독 실패:', e));
     return () => {
       unsubIngredients();
       unsubSaved();
       unsubStats();
+      unsubNotify();
     };
   }, [user?.uid]);
 
@@ -613,6 +619,17 @@ export default function App() {
     await consumeIngredients(user.uid, items);
   };
 
+  const handleToggleNotify = () => {
+    if (!user) return;
+    const next = !notifyExpiry;
+    setNotifyExpiryState(next); // 낙관적 업데이트
+    setNotifyExpiry(user.uid, next).catch((e) => {
+      console.error('알림 설정 저장 실패:', e);
+      setNotifyExpiryState(!next);
+      alert('알림 설정 변경에 실패했어요. 잠시 후 다시 시도해주세요.');
+    });
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -658,7 +675,13 @@ export default function App() {
                     <button onClick={() => { setMenuOpen(false); setView('saved'); }} className="w-full text-left px-4 py-3 text-sm font-medium hover:bg-surface-container-low flex items-center gap-2">
                       <Bookmark size={16} /> 저장한 레시피
                     </button>
-                    <button onClick={handleLogout} className="w-full text-left px-4 py-3 text-sm font-medium text-error hover:bg-surface-container-low flex items-center gap-2">
+                    <button onClick={handleToggleNotify} className="w-full text-left px-4 py-3 text-sm font-medium hover:bg-surface-container-low flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-2"><Bell size={16} /> 임박 재료 알림</span>
+                      <span className={`relative w-9 h-5 rounded-full transition-colors ${notifyExpiry ? 'bg-primary' : 'bg-outline-variant'}`}>
+                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${notifyExpiry ? 'translate-x-4' : ''}`} />
+                      </span>
+                    </button>
+                    <button onClick={handleLogout} className="w-full text-left px-4 py-3 text-sm font-medium text-error hover:bg-surface-container-low flex items-center gap-2 border-t border-surface-variant">
                       <LogOut size={16} /> 로그아웃
                     </button>
                   </div>
