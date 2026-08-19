@@ -121,3 +121,12 @@ export interface RecipeDetail {
   steps: RecipeStep[];
   tips: string[];
 }
+
+export interface YoutubeVideo {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  thumbnail: string;
+  duration: string;
+  viewCount: number;
+}

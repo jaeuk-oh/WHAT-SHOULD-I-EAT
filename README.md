@@ -15,6 +15,7 @@
 - **소진 기록** — "다 먹었어요 / 버렸어요"를 구분해 기록하고, 이번 달 소진율을 리포트로 보여줌
 - **AI 레시피 추천** — 임박 재료 우선, 자유 프롬프트/카테고리 필터/재추천, 대체 재료 안내
 - **단계별 조리법** — 필요한 재료와 분량, 3~8단계 조리 순서, 단계별 체크
+- **레시피 영상** — YouTube Data API로 실제 요리 영상을 찾아 공식 임베드로 재생. AI가 *무엇을* 만들지 정하고, 영상이 *어떻게* 만드는지 보여준다
 - **커뮤니티/셀럽 레시피** — Firestore `recipes` 컬렉션, 중복 불가 좋아요
 - **저장한 레시피** — `users/{uid}/saved`에 스냅샷 저장
 - **PWA** — 홈 화면 설치, 재방문 시 즉시 로딩
@@ -28,6 +29,7 @@
       ├─ POST /api/receipt-scan    영수증 이미지 → 재료 목록      (하루 30회)
       ├─ POST /api/recommend       재료 목록 → 레시피 추천        (하루 60회)
       ├─ POST /api/recipe-detail   레시피 이름 → 단계별 조리법    (하루 60회)
+      ├─ POST /api/youtube-recipes 레시피 이름 → 유튜브 영상      (하루 40회, 7일 캐시)
       └─ POST /api/account-delete  회원 탈퇴 (데이터 + 계정 삭제) (하루 5회)
 ```
 
@@ -40,6 +42,16 @@ OpenAI 키는 서버에만 존재한다.
 돈이 나가거나(OpenAI) 신뢰가 필요한 것(사용량 집계, 계정 삭제)만 서버를 거친다.
 재료·저장 레시피처럼 사용자 소유 데이터는 클라이언트가 Firestore에 직접 붙고 보안 규칙으로 막는다 —
 비용과 지연 모두 이쪽이 유리하다.
+
+### 유튜브 연동에 대해
+
+공식 **YouTube Data API v3**로 메타데이터만 가져오고, 재생은 **공식 iframe 임베드**
+(`youtube-nocookie.com`)로 한다. 채널명과 원본 링크를 항상 함께 노출해 원저작자에게 트래픽이 간다.
+**자막·대본을 긁어 조리법 텍스트로 복제하지 않는다** — 그건 YouTube ToS 위반이다.
+
+무료 할당량이 하루 10,000 유닛이고 검색 1회가 100 유닛이라 **하루 100회가 상한**이다.
+쿼리 단위로 Firestore `youtubeCache`에 7일간 캐시해 이 한도를 넘지 않게 한다.
+사용자가 늘면 사용자별 쿼터(`api/_quota.ts`)만으로는 부족하니 전역 상한을 함께 걸어야 한다.
 
 ## 로컬 개발
 
@@ -57,6 +69,7 @@ npm run dev            # 터미널 2: Vite (:3000, /api는 :3001로 프록시)
 | `npm run seed` | 공유 레시피 시드 (Admin SDK 필요) |
 | `npx tsx scripts/test-scan.ts <이미지>` | 영수증 인식 단독 검증 |
 | `npx tsx scripts/test-recommend.ts "<프롬프트>"` | 추천 단독 검증 |
+| `npx tsx scripts/test-youtube.ts "<레시피 이름>"` | 유튜브 검색 단독 검증 |
 | `python3 scripts/generate-icons.py` | PWA 아이콘·OG 이미지 재생성 |
 
 > `VITE_FIREBASE_DATABASE_ID`는 필수다 — AI Studio가 만든 프로젝트는 비기본 Firestore 데이터베이스를 쓴다.
@@ -70,6 +83,8 @@ npx vercel env add OPENAI_API_KEY production        # .env의 값들을 각각 �
 npx vercel env add FIREBASE_SERVICE_ACCOUNT production
 npx vercel --prod
 ```
+
+선택 환경변수: `YOUTUBE_API_KEY` (없으면 영상 섹션만 숨겨지고 나머지는 정상 동작)
 
 필수 환경변수: `OPENAI_API_KEY`, `OPENAI_MODEL`, `FIREBASE_SERVICE_ACCOUNT`,
 `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`,

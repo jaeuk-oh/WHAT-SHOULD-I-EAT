@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Bookmark, Check, Circle, Info, Lightbulb, ShoppingCart } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import AppHeader from '../components/AppHeader';
+import RecipeVideos from '../components/RecipeVideos';
 import { ApiError, fetchRecipeDetail } from '../lib/api';
 import type { IngredientVM, RecipeDetail, SavedRecipeInput } from '../types';
 
@@ -126,6 +127,8 @@ export default function RecipeDetailView({
                   </p>
                 )}
               </section>
+
+              <RecipeVideos title={detail.title} />
 
               <section className="space-y-3">
                 <div className="flex items-baseline justify-between">

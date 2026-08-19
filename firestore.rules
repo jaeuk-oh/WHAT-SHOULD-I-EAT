@@ -99,6 +99,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---------- 유튜브 검색 캐시 ----------
+    // 서버(Admin SDK) 전용. 클라이언트는 읽지도 쓰지도 않는다.
+
+    match /youtubeCache/{queryKey} {
+      allow read, write: if false;
+    }
+
     // ---------- 공유 레시피 ----------
 
     match /recipes/{recipeId} {

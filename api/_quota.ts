@@ -11,7 +11,12 @@ import { getAdminDb } from './_admin.js';
  * 클라이언트는 이 문서를 읽을 수만 있고 쓸 수 없다(firestore.rules 참고).
  */
 
-export type QuotaEndpoint = 'receiptScan' | 'recommend' | 'recipeDetail' | 'accountDelete';
+export type QuotaEndpoint =
+  | 'receiptScan'
+  | 'recommend'
+  | 'recipeDetail'
+  | 'youtubeSearch'
+  | 'accountDelete';
 
 interface Limits {
   /** 하루 최대 호출 수 (KST 자정 리셋) */
@@ -27,6 +32,9 @@ export const LIMITS: Record<QuotaEndpoint, Limits> = {
   receiptScan: { perDay: 30, windowSec: 60, perWindow: 5 },
   recommend: { perDay: 60, windowSec: 60, perWindow: 10 },
   recipeDetail: { perDay: 60, windowSec: 60, perWindow: 10 },
+  // YouTube 무료 할당량은 검색 100회/일이 전부다(전체 사용자 합산).
+  // 대부분은 캐시가 흡수하지만, 사용자가 늘면 전역 상한도 함께 걸어야 한다.
+  youtubeSearch: { perDay: 40, windowSec: 60, perWindow: 10 },
   accountDelete: { perDay: 5, windowSec: 300, perWindow: 3 },
 };
 

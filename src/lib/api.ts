@@ -1,5 +1,5 @@
 import { auth } from './firebase';
-import type { NewIngredient, RecipeDetail, RecommendedRecipe } from '../types';
+import type { NewIngredient, RecipeDetail, RecommendedRecipe, YoutubeVideo } from '../types';
 
 /** 서버가 명시적으로 내려준 사용자 대상 오류. 호출부가 재시도 안내에 쓸 수 있다. */
 export class ApiError extends Error {
@@ -66,6 +66,20 @@ export async function fetchRecipeDetail(
 ): Promise<RecipeDetail> {
   const data = await authedPost<{ detail: RecipeDetail }>('/api/recipe-detail', { title, ingredients });
   return data.detail;
+}
+
+/**
+ * 레시피 이름으로 유튜브 영상을 찾는다.
+ * 부가 기능이라 실패해도 화면을 막지 않고 빈 배열로 처리한다.
+ */
+export async function fetchRecipeVideos(title: string): Promise<YoutubeVideo[]> {
+  try {
+    const data = await authedPost<{ videos: YoutubeVideo[] }>('/api/youtube-recipes', { title });
+    return data.videos;
+  } catch (e) {
+    console.error('영상 검색 실패:', e);
+    return [];
+  }
 }
 
 /** 회원 탈퇴. 서버가 Firestore 데이터와 Auth 계정을 함께 지운다. */

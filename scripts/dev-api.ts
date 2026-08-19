@@ -6,6 +6,7 @@ import receiptScan from '../api/receipt-scan';
 import recommend from '../api/recommend';
 import recipeDetail from '../api/recipe-detail';
 import accountDelete from '../api/account-delete';
+import youtubeRecipes from '../api/youtube-recipes';
 
 const app = express();
 app.use(express.json({ limit: '8mb' }));
@@ -20,6 +21,7 @@ app.post('/api/receipt-scan', adapt(receiptScan));
 app.post('/api/recommend', adapt(recommend));
 app.post('/api/recipe-detail', adapt(recipeDetail));
 app.post('/api/account-delete', adapt(accountDelete));
+app.post('/api/youtube-recipes', adapt(youtubeRecipes));
 
 const port = 3001;
 app.listen(port, () => console.log(`로컬 API 서버: http://localhost:${port}`));
