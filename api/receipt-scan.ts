@@ -1,15 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from './_utils.js';
+import { guard } from './_utils.js';
 import { scanReceiptImage } from './_core.js';
 
 // base64 data URL 기준 약 4.5MB (클라이언트에서 1280px JPEG로 압축해 전송)
 const MAX_IMAGE_LENGTH = 6_000_000;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: '허용되지 않은 메서드입니다.' });
-  }
-  const uid = await requireAuth(req, res);
+  const uid = await guard(req, res, 'receiptScan');
   if (!uid) return;
 
   const { image } = (req.body ?? {}) as { image?: unknown };

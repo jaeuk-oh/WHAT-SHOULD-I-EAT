@@ -5,13 +5,45 @@ export interface Ingredient {
   id: string;
   name: string;
   category: IngredientCategory;
+  /** "1팩", "2개", "500g" 처럼 표시용 자유 텍스트. 계산하지 않는다. */
+  quantity: string;
   expiresAt: Date;
 }
 
 export interface NewIngredient {
   name: string;
   category: IngredientCategory;
+  quantity: string;
   shelfLifeDays: number;
+}
+
+/** 재료가 목록에서 사라진 이유. 'eaten'과 'discarded'를 구분해야 낭비를 측정할 수 있다. */
+export type ConsumeAction = 'eaten' | 'discarded';
+
+export interface HistoryEntry {
+  id: string;
+  name: string;
+  category: IngredientCategory;
+  action: ConsumeAction;
+  at: Date;
+}
+
+export interface SavingsSummary {
+  eaten: number;
+  discarded: number;
+  /** 소진율(0~1). 이 서비스의 본질적 가치 지표. */
+  rate: number;
+}
+
+export function summarize(entries: HistoryEntry[]): SavingsSummary {
+  const eaten = entries.filter((e) => e.action === 'eaten').length;
+  const discarded = entries.filter((e) => e.action === 'discarded').length;
+  const total = eaten + discarded;
+  return { eaten, discarded, rate: total === 0 ? 0 : eaten / total };
+}
+
+export function startOfMonth(date = new Date()): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
 export type IngredientVM = Ingredient & { daysLeft: number };
@@ -66,4 +98,26 @@ export function expiryFromDays(days: number): Date {
   const d = startOfDay(new Date());
   d.setDate(d.getDate() + days);
   return d;
+}
+
+export interface RecipeDetailIngredient {
+  name: string;
+  amount: string;
+  owned: boolean;
+}
+
+export interface RecipeStep {
+  text: string;
+  tip: string;
+}
+
+export interface RecipeDetail {
+  title: string;
+  summary: string;
+  time: string;
+  difficulty: string;
+  servings: string;
+  ingredients: RecipeDetailIngredient[];
+  steps: RecipeStep[];
+  tips: string[];
 }

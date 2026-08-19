@@ -13,6 +13,8 @@ export function getModel() {
 export interface ScannedItem {
   name: string;
   category: string;
+  /** "1팩", "2개", "500g" 등 영수증에 적힌 수량/용량 */
+  quantity: string;
   shelfLifeDays: number;
 }
 
@@ -123,6 +125,7 @@ export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
           '영수증 이미지에서 식품 항목만 추출하고, 생활용품·주류·봉투 등 식재료가 아닌 항목은 제외한다. ' +
           '각 항목의 상품명은 브랜드/용량을 뺀 간결한 재료명으로 정리한다 (예: "서울우유 1L" → "우유"). ' +
           '카테고리는 주어진 목록에서만 고른다 (예: 두부·콩나물은 콩류, 애호박·오이 등 채소는 채소류, 우유·치즈는 유제품, 계란·면·소스는 기타). ' +
+          'quantity에는 영수증의 수량이나 용량을 짧게 적는다 (예: "1팩", "2개", "500g", "1L"). 알 수 없으면 "1개". ' +
           'shelfLifeDays는 일반적인 냉장 보관 기준 예상 보관일수를 정수로 추정한다.',
       },
       {
@@ -150,9 +153,10 @@ export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
                 properties: {
                   name: { type: 'string' },
                   category: { type: 'string', enum: [...INGREDIENT_CATEGORIES] },
+                  quantity: { type: 'string' },
                   shelfLifeDays: { type: 'integer' },
                 },
-                required: ['name', 'category', 'shelfLifeDays'],
+                required: ['name', 'category', 'quantity', 'shelfLifeDays'],
               },
             },
           },
@@ -170,6 +174,102 @@ export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
     .map((i) => ({
       name: i.name.trim(),
       category: (INGREDIENT_CATEGORIES as readonly string[]).includes(i.category) ? i.category : '기타',
+      quantity: (i.quantity ?? '').trim().slice(0, 20) || '1개',
       shelfLifeDays: Math.min(365, Math.max(1, Math.round(i.shelfLifeDays))),
     }));
+}
+
+export interface RecipeDetailInput {
+  title: string;
+  ingredients: { name: string; category: string; daysLeft: number }[];
+}
+
+export interface RecipeStep {
+  text: string;
+  tip: string;
+}
+
+export interface RecipeDetail {
+  title: string;
+  summary: string;
+  time: string;
+  difficulty: string;
+  servings: string;
+  ingredients: { name: string; amount: string; owned: boolean }[];
+  steps: RecipeStep[];
+  tips: string[];
+}
+
+export async function getRecipeDetail(input: RecipeDetailInput): Promise<RecipeDetail> {
+  const owned = input.ingredients.map((i) => i.name).join(', ') || '(등록된 재료 없음)';
+
+  const response = await getOpenAI().chat.completions.create({
+    model: getModel(),
+    messages: [
+      {
+        role: 'system',
+        content:
+          '너는 요리 초보도 따라 할 수 있게 설명하는 셰프다. ' +
+          '주어진 요리의 실제 조리법을 단계별로 알려준다. ' +
+          'ingredients에는 이 요리에 필요한 재료와 분량을 적고, 사용자가 이미 가진 재료면 owned를 true로 한다. ' +
+          'steps는 3~8단계로, 각 단계는 한 문장으로 명확하게 쓴다. ' +
+          '불 세기·시간처럼 실패하기 쉬운 부분은 tip에 짧게 덧붙이고, 특별히 덧붙일 말이 없으면 tip은 빈 문자열로 둔다. ' +
+          "time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나, servings는 '1인분' 형태. " +
+          'tips에는 보관법이나 응용법 같은 조언을 0~3개 넣는다. 모든 텍스트는 한국어.',
+      },
+      {
+        role: 'user',
+        content: `요리 이름: ${input.title}\n내가 가진 재료: ${owned}\n\n이 요리의 조리법을 알려줘.`,
+      },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'recipe_detail',
+        strict: true,
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            title: { type: 'string' },
+            summary: { type: 'string' },
+            time: { type: 'string' },
+            difficulty: { type: 'string', enum: ['아주 쉬움', '쉬움', '보통', '어려움'] },
+            servings: { type: 'string' },
+            ingredients: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: { type: 'string' },
+                  amount: { type: 'string' },
+                  owned: { type: 'boolean' },
+                },
+                required: ['name', 'amount', 'owned'],
+              },
+            },
+            steps: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  text: { type: 'string' },
+                  tip: { type: 'string' },
+                },
+                required: ['text', 'tip'],
+              },
+            },
+            tips: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['title', 'summary', 'time', 'difficulty', 'servings', 'ingredients', 'steps', 'tips'],
+        },
+      },
+    },
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error('빈 응답');
+  return JSON.parse(content) as RecipeDetail;
 }

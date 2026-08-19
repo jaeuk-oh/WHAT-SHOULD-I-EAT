@@ -1,12 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from './_utils.js';
+import { guard } from './_utils.js';
 import { recommendRecipes, type RecommendInput } from './_core.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: '허용되지 않은 메서드입니다.' });
-  }
-  const uid = await requireAuth(req, res);
+  const uid = await guard(req, res, 'recommend');
   if (!uid) return;
 
   const body = (req.body ?? {}) as Partial<RecommendInput>;

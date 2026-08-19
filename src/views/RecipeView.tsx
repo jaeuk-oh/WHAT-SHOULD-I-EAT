@@ -1,127 +1,115 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertTriangle, ArrowLeft, Bookmark, ChefHat, Info, RefreshCw, Send, Wand2 } from 'lucide-react';
+import { AlertTriangle, Bookmark, ChefHat, ChevronRight, Info, RefreshCw, Send, Wand2 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import AppHeader from '../components/AppHeader';
+import { useToast } from '../components/Toast';
 import { fetchRecommendations } from '../lib/api';
-import { likeRecipe, seedRecipes, subscribeRecipes } from '../lib/db';
+import { subscribeRecipes } from '../lib/db';
+import { recipePath } from '../lib/paths';
 import type { CommunityRecipe, IngredientVM, RecommendedRecipe, SavedRecipeInput } from '../types';
 
-const categories = ['전체', '다이어트', '간단한', '자극적인', '비건'];
+const CATEGORIES = ['전체', '다이어트', '간단한', '자극적인', '비건'];
+const TABS = ['맞춤추천', '커뮤니티', '셀럽/쉐프'] as const;
+type Tab = (typeof TABS)[number];
 
-// recipes 컬렉션이 비어 있을 때 개발 모드에서 1회 투입하는 초기 데이터
-const SEED_IDS = [
-  'community-tuna-mayo',
-  'community-oatmeal',
-  'community-galbijjim',
-  'community-chicken-rice',
-  'celeb-jajang',
-  'celeb-onion',
-  'celeb-tendon',
-];
-const SEED_RECIPES: Omit<CommunityRecipe, 'id'>[] = [
-  { title: '자취생 10분컷 참치마요 덮밥', author: '요리왕비룡', type: 'community', likes: 1245, tags: ['자취', '초간단'] },
-  { title: '식단러의 눈물젖은 오트밀죽', author: '다이어터', type: 'community', likes: 890, tags: ['다이어트', '오트밀'] },
-  { title: '할머니 비밀 레시피, 돼지갈비찜', author: '한식러버', type: 'community', likes: 756, tags: ['돼지고기', '전통'] },
-  { title: '남은 치킨 200% 활용 볶음밥', author: '치느님', type: 'community', likes: 432, tags: ['활용', '치킨'] },
-  { title: '어남선생 류수영의 평생 짜장면', author: '류수영', type: 'celeb', likes: 5430, tags: ['셀럽', '면요리'] },
-  { title: '백종원의 만능 양파 볶음', author: '백종원', type: 'celeb', likes: 4321, tags: ['쉐프', '만능'] },
-  { title: '성시경 텐동 만들기', author: '성시경', type: 'celeb', likes: 3210, tags: ['먹을텐데', '튀김'] },
-];
+function HeartButton({ onToggle, likes, liked }: { onToggle: () => void; likes: number; liked: boolean }) {
+  return (
+    <div className="flex flex-col items-center justify-center shrink-0 z-10">
+      <button
+        onClick={onToggle}
+        aria-pressed={liked}
+        aria-label={liked ? '좋아요 취소' : '좋아요'}
+        className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${liked ? 'bg-error/10 text-error' : 'bg-surface-container-low text-outline hover:text-error'}`}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill={liked ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+        </svg>
+      </button>
+      <span className="text-xs font-bold text-on-surface-variant mt-1">{likes.toLocaleString()}</span>
+    </div>
+  );
+}
 
-const HeartButton = ({ onLike, likes }: { onLike: () => void; likes: number }) => (
-  <div className="flex flex-col items-center justify-center shrink-0 z-10">
-    <button
-      onClick={onLike}
-      className="w-10 h-10 rounded-full bg-surface-container-low text-error flex items-center justify-center hover:bg-error/10 transition-colors"
-    >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-    </button>
-    <span className="text-xs font-bold text-on-surface-variant mt-1">{likes.toLocaleString()}</span>
-  </div>
-);
-
-export default function RecipeView({ onBack, ingredients, savedTitles, onToggleSave }: {
-  onBack: () => void;
+export default function RecipeView({
+  ingredients,
+  savedTitles,
+  likedIds,
+  onToggleSave,
+  onToggleLike,
+}: {
   ingredients: IngredientVM[];
   savedTitles: Set<string>;
+  likedIds: Set<string>;
   onToggleSave: (recipe: SavedRecipeInput, e: React.MouseEvent) => void;
+  onToggleLike: (recipeId: string) => void;
 }) {
-  const [currentTab, setCurrentTab] = useState<'맞춤추천' | '커뮤니티' | '셀럽/쉐프'>('맞춤추천');
+  const navigate = useNavigate();
+  const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const tabParam = searchParams.get('tab') as Tab | null;
+  const currentTab: Tab = tabParam && TABS.includes(tabParam) ? tabParam : '맞춤추천';
+
   const [activeCategory, setActiveCategory] = useState('전체');
   const [aiPrompt, setAiPrompt] = useState('');
   const [recipes, setRecipes] = useState<RecommendedRecipe[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [shared, setShared] = useState<CommunityRecipe[] | null>(null);
-  const [seeding, setSeeding] = useState(false);
 
-  const urgent = ingredients.filter(i => i.daysLeft <= 2);
-  const communityList = (shared ?? []).filter(r => r.type === 'community');
-  const celebList = (shared ?? []).filter(r => r.type === 'celeb');
+  const urgent = ingredients.filter((i) => i.daysLeft <= 2);
+  const communityList = (shared ?? []).filter((r) => r.type === 'community');
+  const celebList = (shared ?? []).filter((r) => r.type === 'celeb');
 
-  const loadRecipes = async (opts?: { exclude?: string[]; category?: string }) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const category = opts?.category ?? activeCategory;
-      const result = await fetchRecommendations({
-        ingredients: ingredients.map(i => ({ name: i.name, category: i.category, daysLeft: i.daysLeft })),
-        category: category === '전체' ? undefined : category,
-        prompt: aiPrompt.trim() || undefined,
-        exclude: opts?.exclude,
-      });
-      setRecipes(result);
-    } catch (e) {
-      console.error('레시피 추천 실패:', e);
-      setError(e instanceof Error ? e.message : '추천을 불러오지 못했어요.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const loadRecipes = useCallback(
+    async (opts?: { exclude?: string[]; category?: string; prompt?: string }) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const category = opts?.category ?? activeCategory;
+        const result = await fetchRecommendations({
+          ingredients: ingredients.map((i) => ({ name: i.name, category: i.category, daysLeft: i.daysLeft })),
+          category: category === '전체' ? undefined : category,
+          prompt: (opts?.prompt ?? aiPrompt).trim() || undefined,
+          exclude: opts?.exclude,
+        });
+        setRecipes(result);
+      } catch (e) {
+        console.error('레시피 추천 실패:', e);
+        setError(e instanceof Error ? e.message : '추천을 불러오지 못했어요.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    // ingredients는 매 렌더 새 배열이라 의존성에 넣으면 무한 호출이 된다. 최초 1회 + 사용자 조작으로만 호출한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeCategory, aiPrompt],
+  );
 
   useEffect(() => {
-    loadRecipes();
-    const unsubscribe = subscribeRecipes(setShared, (e) => console.error('레시피 목록 구독 실패:', e));
-    return unsubscribe;
+    void loadRecipes();
+    return subscribeRecipes(setShared, (e) => console.error('레시피 목록 구독 실패:', e));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const setTab = (tab: Tab) => setSearchParams(tab === '맞춤추천' ? {} : { tab }, { replace: true });
+
   const handleCategory = (cat: string) => {
     setActiveCategory(cat);
-    loadRecipes({ category: cat });
+    void loadRecipes({ category: cat });
   };
 
-  const handleLike = (id: string) => {
-    likeRecipe(id).catch((e) => console.error('좋아요 실패:', e));
-  };
-
-  const handleSeed = async () => {
-    setSeeding(true);
-    try {
-      await seedRecipes(SEED_RECIPES, SEED_IDS);
-    } catch (e) {
-      console.error('시드 실패:', e);
-      alert('시드 데이터 투입에 실패했어요.');
-    } finally {
-      setSeeding(false);
-    }
-  };
+  const openDetail = (title: string) => navigate(recipePath(title));
 
   const sharedEmptyState = (label: string) => (
-    <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-4">
+    <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-2">
       {shared === null ? (
         <p className="text-sm">불러오는 중...</p>
       ) : (
         <>
           <p className="text-sm">아직 등록된 {label} 레시피가 없어요.</p>
-          {import.meta.env.DEV && (
-            <button
-              onClick={handleSeed}
-              disabled={seeding}
-              className="px-5 h-11 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-60"
-            >
-              {seeding ? '투입 중...' : '초기 데이터 넣기 (개발용)'}
-            </button>
-          )}
+          <p className="text-xs text-outline">곧 채워둘게요. 그동안 맞춤추천을 이용해보세요.</p>
         </>
       )}
     </div>
@@ -130,19 +118,15 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-surface">
       <div className="w-full max-w-md mx-auto bg-surface min-h-screen relative">
-        <header className="flex justify-between items-center p-5 sticky top-0 bg-surface z-50">
-          <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-surface-variant">
-            <ArrowLeft size={24} />
-          </button>
-          <h1 className="text-xl font-bold">오늘 뭐 먹지?</h1>
-          <div className="w-10"></div>
-        </header>
+        <AppHeader title="오늘 뭐 먹지?" />
 
         <div className="flex px-5 pt-2 pb-0 border-b border-surface-variant sticky top-[72px] bg-surface z-40">
-          {(['맞춤추천', '커뮤니티', '셀럽/쉐프'] as const).map(tab => (
+          {TABS.map((tab) => (
             <button
               key={tab}
-              onClick={() => setCurrentTab(tab)}
+              onClick={() => setTab(tab)}
+              aria-selected={currentTab === tab}
+              role="tab"
               className={`flex-1 pb-3 text-center font-semibold text-sm relative ${currentTab === tab ? 'text-primary' : 'text-on-surface-variant'}`}
             >
               {tab}
@@ -155,11 +139,12 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
           {currentTab === '맞춤추천' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-6">
               <div className="flex overflow-x-auto gap-2 pb-1 -mx-5 px-5 snap-x" style={{ scrollbarWidth: 'none' }}>
-                {categories.map(cat => (
+                {CATEGORIES.map((cat) => (
                   <button
                     key={cat}
                     onClick={() => handleCategory(cat)}
                     disabled={loading}
+                    aria-pressed={activeCategory === cat}
                     className={`snap-start flex-none px-4 py-2 rounded-full whitespace-nowrap text-sm font-semibold transition-colors ${
                       activeCategory === cat
                         ? 'bg-primary text-white shadow-sm'
@@ -179,13 +164,15 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
                   type="text"
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !loading) loadRecipes(); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !loading) void loadRecipes(); }}
                   placeholder="오늘은 자극적인게 땡겨"
+                  aria-label="추천 요청 입력"
                   className="flex-1 bg-transparent border-none focus:ring-0 text-sm outline-none"
                 />
                 <button
-                  onClick={() => loadRecipes()}
+                  onClick={() => void loadRecipes()}
                   disabled={loading}
+                  aria-label="추천 받기"
                   className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-60"
                 >
                   <Send size={18} />
@@ -193,22 +180,20 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
               </div>
 
               <section className="bg-primary-container/20 rounded-xl p-6 flex items-start gap-4 border border-primary-container/30 mt-2">
-                <div className="text-4xl"><ChefHat size={40} className="text-primary"/></div>
-                <div>
-                  <p className="text-lg leading-relaxed text-on-surface">
-                    냉장고 살펴봤어요! <br/>
-                    {urgent.length > 0 ? (
-                      <><span className="font-bold text-primary">곧 상하는 {urgent.slice(0, 2).map(i => i.name).join('·')}</span>부터 쓸게요.</>
-                    ) : (
-                      <>지금 있는 재료로 만들 수 있는 메뉴를 골랐어요.</>
-                    )}
-                  </p>
-                </div>
+                <ChefHat size={40} className="text-primary shrink-0" />
+                <p className="text-lg leading-relaxed text-on-surface">
+                  냉장고 살펴봤어요! <br />
+                  {urgent.length > 0 ? (
+                    <><span className="font-bold text-primary">곧 상하는 {urgent.slice(0, 2).map((i) => i.name).join('·')}</span>부터 쓸게요.</>
+                  ) : (
+                    <>지금 있는 재료로 만들 수 있는 메뉴를 골랐어요.</>
+                  )}
+                </p>
               </section>
 
               {loading ? (
-                <section className="flex flex-col gap-4">
-                  {[0, 1, 2].map(i => (
+                <section className="flex flex-col gap-4" aria-busy="true">
+                  {[0, 1, 2].map((i) => (
                     <div key={i} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant animate-pulse space-y-3">
                       <div className="h-6 bg-surface-container-high rounded w-2/3" />
                       <div className="h-4 bg-surface-container-high rounded w-1/2" />
@@ -219,24 +204,29 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
               ) : error ? (
                 <section className="bg-white rounded-xl p-6 text-center space-y-4 border border-surface-variant">
                   <p className="text-sm text-error">{error}</p>
-                  <button onClick={() => loadRecipes()} className="px-6 h-11 rounded-xl bg-primary text-white font-semibold">
+                  <button onClick={() => void loadRecipes()} className="px-6 h-11 rounded-xl bg-primary text-white font-semibold">
                     다시 시도
                   </button>
                 </section>
               ) : (
                 <section className="flex flex-col gap-4">
-                  {recipes.map(recipe => (
-                    <article key={recipe.title} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex flex-col gap-3 hover:shadow-md transition-shadow">
+                  {recipes.map((recipe) => (
+                    <article
+                      key={recipe.title}
+                      onClick={() => openDetail(recipe.title)}
+                      className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex flex-col gap-3 hover:shadow-md transition-shadow cursor-pointer"
+                    >
                       <div className="flex justify-between items-start">
                         <div className="flex-1 pr-2">
                           <h2 className="text-xl font-semibold">{recipe.title}</h2>
                           <div className="flex gap-2 mt-1">
-                            <span className="bg-surface-container-high px-2 py-1 rounded-full text-xs flex items-center gap-1">⏱️ {recipe.time}</span>
-                            <span className="bg-surface-container-high px-2 py-1 rounded-full text-xs flex items-center gap-1">🔥 {recipe.difficulty}</span>
+                            <span className="bg-surface-container-high px-2 py-1 rounded-full text-xs">⏱️ {recipe.time}</span>
+                            <span className="bg-surface-container-high px-2 py-1 rounded-full text-xs">🔥 {recipe.difficulty}</span>
                           </div>
                         </div>
                         <button
                           onClick={(e) => onToggleSave({ title: recipe.title, source: 'ai', time: recipe.time, difficulty: recipe.difficulty, author: 'AI 추천', tags: recipe.tags }, e)}
+                          aria-label={savedTitles.has(recipe.title) ? '저장 해제' : '레시피 저장'}
                           className="p-1 -mt-1 -mr-1 text-outline hover:text-primary transition-colors shrink-0"
                         >
                           <Bookmark size={24} className={savedTitles.has(recipe.title) ? 'fill-primary text-primary' : ''} />
@@ -248,7 +238,7 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
                       </p>
                       <div className="flex flex-wrap gap-2 mt-1">
                         {recipe.tags.map((tag, idx) => (
-                          <span key={idx} className={`px-3 py-1 rounded-full text-xs ${idx < 2 ? 'bg-primary-container/30 text-primary-fixed-variant border border-primary-container/50' : 'bg-surface-container-high text-on-surface-variant'}`}>
+                          <span key={idx} className={`px-3 py-1 rounded-full text-xs ${idx < 2 ? 'bg-primary-container/30 text-on-primary-container border border-primary-container/50' : 'bg-surface-container-high text-on-surface-variant'}`}>
                             {tag}
                           </span>
                         ))}
@@ -265,6 +255,9 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
                           ))}
                         </div>
                       )}
+                      <span className="mt-1 text-sm font-semibold text-primary flex items-center gap-1">
+                        만드는 법 보기 <ChevronRight size={16} />
+                      </span>
                     </article>
                   ))}
                 </section>
@@ -274,36 +267,33 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
 
           {currentTab === '커뮤니티' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-4">
-              <div className="flex justify-between items-center mb-2">
-                <h2 className="text-lg font-bold">이번 주 인기 랭킹 🏆</h2>
-              </div>
-
+              <h2 className="text-lg font-bold mb-2">이번 주 인기 랭킹 🏆</h2>
               {communityList.length === 0 ? sharedEmptyState('커뮤니티') : communityList.map((recipe, idx) => (
                 <article key={recipe.id} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex items-center gap-4 hover:shadow-md transition-shadow relative overflow-hidden">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shrink-0 z-10 ${idx < 3 ? 'bg-tertiary text-white shadow-md' : 'bg-surface-variant text-on-surface-variant'}`}>
                     {idx + 1}
                   </div>
-                  <div className="flex-1 z-10 pr-2">
-                    <div className="flex justify-between items-start">
-                      <h3 className="text-lg font-bold text-on-surface leading-tight mb-1">{recipe.title}</h3>
+                  <div className="flex-1 z-10 pr-2 min-w-0">
+                    <div className="flex justify-between items-start gap-2">
+                      <button onClick={() => openDetail(recipe.title)} className="text-left">
+                        <h3 className="text-lg font-bold text-on-surface leading-tight mb-1">{recipe.title}</h3>
+                      </button>
                       <button
                         onClick={(e) => onToggleSave({ title: recipe.title, source: 'community', time: '', difficulty: '', author: recipe.author, tags: recipe.tags }, e)}
-                        className={`p-1 -mt-1 -mr-1 transition-colors ${savedTitles.has(recipe.title) ? 'text-primary' : 'text-outline hover:text-primary'}`}
+                        aria-label={savedTitles.has(recipe.title) ? '저장 해제' : '레시피 저장'}
+                        className={`p-1 -mt-1 -mr-1 shrink-0 transition-colors ${savedTitles.has(recipe.title) ? 'text-primary' : 'text-outline hover:text-primary'}`}
                       >
                         <Bookmark size={20} className={savedTitles.has(recipe.title) ? 'fill-primary' : ''} />
                       </button>
                     </div>
                     <p className="text-sm text-on-surface-variant font-medium">{recipe.author}</p>
                     <div className="flex flex-wrap gap-2 mt-2">
-                      {recipe.tags.map(tag => (
+                      {recipe.tags.map((tag) => (
                         <span key={tag} className="bg-surface-container-high text-on-surface-variant px-2 py-0.5 rounded-md text-xs">#{tag}</span>
                       ))}
                     </div>
                   </div>
-                  <HeartButton onLike={() => handleLike(recipe.id)} likes={recipe.likes} />
-                  {idx === 0 && (
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-tertiary-container/20 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none" />
-                  )}
+                  <HeartButton liked={likedIds.has(recipe.id)} likes={recipe.likes} onToggle={() => onToggleLike(recipe.id)} />
                 </article>
               ))}
             </motion.div>
@@ -311,44 +301,49 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
 
           {currentTab === '셀럽/쉐프' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-4">
-              <div className="flex justify-between items-center mb-2">
-                <h2 className="text-lg font-bold">인증된 프로의 맛 👨‍🍳</h2>
-              </div>
-
-              {celebList.length === 0 ? sharedEmptyState('셀럽/쉐프') : celebList.map(recipe => (
+              <h2 className="text-lg font-bold mb-2">인증된 프로의 맛 👨‍🍳</h2>
+              {celebList.length === 0 ? sharedEmptyState('셀럽/쉐프') : celebList.map((recipe) => (
                 <article key={recipe.id} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex justify-between items-center gap-4 hover:shadow-md transition-shadow">
-                  <div className="flex-1 pr-2">
-                    <div className="flex justify-between items-start">
-                      <h3 className="text-lg font-bold text-on-surface leading-tight mb-1">{recipe.title}</h3>
+                  <div className="flex-1 pr-2 min-w-0">
+                    <div className="flex justify-between items-start gap-2">
+                      <button onClick={() => openDetail(recipe.title)} className="text-left">
+                        <h3 className="text-lg font-bold text-on-surface leading-tight mb-1">{recipe.title}</h3>
+                      </button>
                       <button
                         onClick={(e) => onToggleSave({ title: recipe.title, source: 'celeb', time: '', difficulty: '', author: recipe.author, tags: recipe.tags }, e)}
-                        className={`p-1 -mt-1 -mr-1 transition-colors ${savedTitles.has(recipe.title) ? 'text-primary' : 'text-outline hover:text-primary'}`}
+                        aria-label={savedTitles.has(recipe.title) ? '저장 해제' : '레시피 저장'}
+                        className={`p-1 -mt-1 -mr-1 shrink-0 transition-colors ${savedTitles.has(recipe.title) ? 'text-primary' : 'text-outline hover:text-primary'}`}
                       >
                         <Bookmark size={20} className={savedTitles.has(recipe.title) ? 'fill-primary' : ''} />
                       </button>
                     </div>
                     <p className="text-sm text-on-surface-variant font-medium">{recipe.author}</p>
                     <div className="flex flex-wrap gap-2 mt-2">
-                      {recipe.tags.map(tag => (
+                      {recipe.tags.map((tag) => (
                         <span key={tag} className="bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded-md text-xs font-medium">#{tag}</span>
                       ))}
                     </div>
                   </div>
-                  <HeartButton onLike={() => handleLike(recipe.id)} likes={recipe.likes} />
+                  <HeartButton liked={likedIds.has(recipe.id)} likes={recipe.likes} onToggle={() => onToggleLike(recipe.id)} />
                 </article>
               ))}
             </motion.div>
           )}
         </main>
 
-        {currentTab === '맞춤추천' && (
+        {currentTab === '맞춤추천' && !loading && (
           <div className="fixed bottom-0 left-0 w-full md:max-w-md md:left-1/2 md:-translate-x-1/2 bg-gradient-to-t from-surface via-surface to-transparent pt-10 pb-8 px-5 z-40">
             <button
-              onClick={() => loadRecipes({ exclude: recipes.map(r => r.title) })}
-              disabled={loading}
-              className="w-full h-14 bg-primary text-white rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 hover:bg-primary/90 disabled:opacity-60"
+              onClick={() => {
+                if (recipes.length === 0) {
+                  toast.show('먼저 추천을 받아볼까요?');
+                  return;
+                }
+                void loadRecipes({ exclude: recipes.map((r) => r.title) });
+              }}
+              className="w-full h-14 bg-primary text-white rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 hover:bg-primary/90"
             >
-              <RefreshCw size={20} className={loading ? 'animate-spin' : ''} /> 다른 메뉴 추천받기
+              <RefreshCw size={20} /> 다른 메뉴 추천받기
             </button>
           </div>
         )}
