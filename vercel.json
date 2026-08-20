@@ -7,7 +7,7 @@
     }
   ],
   "functions": {
-    "api/*.ts": {
+    "api/**/*.ts": {
       "maxDuration": 60
     }
   },
@@ -68,5 +68,8 @@
         }
       ]
     }
+  ],
+  "crons": [
+    { "path": "/api/cron/expiry-digest", "schedule": "0 0 * * *" }
   ]
 }

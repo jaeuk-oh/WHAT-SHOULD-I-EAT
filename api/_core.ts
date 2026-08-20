@@ -29,12 +29,13 @@ export interface RecommendedRecipe {
   title: string;
   time: string;
   difficulty: string;
+  servings: string;
   warning: string;
   warningType: 'alert' | 'info';
   tags: string[];
+  usedIngredients: { name: string; amount: string }[];
+  steps: string[];
   substitutes: { missing: string; replaceWith: string }[];
-  /** 이 요리에 쓰이는, 사용자가 이미 가진 재료 */
-  usedIngredients: string[];
   /** 이 요리에 필요하지만 사용자에게 없는 재료 */
   missingIngredients: string[];
 }
@@ -53,7 +54,7 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
   if (input.exclude && input.exclude.length > 0) {
     request += `이미 본 메뉴라서 제외할 것: ${input.exclude.join(', ')}\n`;
   }
-  request += '레시피 3~5개를 추천해줘.';
+  request += '레시피 3~4개를 추천해줘.';
 
   const response = await getOpenAI().chat.completions.create({
     model: getModel(),
@@ -67,10 +68,11 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
           '임박 재료를 쓰지 않는 레시피의 warning은 짧은 유용한 코멘트로 하고 warningType은 info로 한다. ' +
           'tags에는 그 레시피에 쓰이는 주요 재료명을 넣되 사용자가 가진 재료를 앞에 둔다. ' +
           '사용자에게 없는 재료가 꼭 필요하면 substitutes에 {missing: 없는 재료, replaceWith: 대체 재료}를 넣고, 대체 재료는 가능하면 사용자가 가진 것으로 고른다. 없으면 빈 배열. ' +
-          'usedIngredients에는 이 요리에 실제로 쓰는 재료 중 사용자가 가진 것만 사용자의 재료명 그대로 넣는다. ' +
-          'missingIngredients에는 이 요리에 꼭 필요하지만 사용자에게 없는 재료를 넣는다. ' +
+          'usedIngredients에는 이 레시피에 실제로 쓰는 재료와 1인분 기준 분량을 {name, amount} 형태로 넣고, 사용자가 가진 재료를 앞쪽에 둔다 (amount 예: "1/2개", "200g", "1큰술"). ' +
+          'missingIngredients에는 이 요리에 꼭 필요하지만 사용자에게 없는 재료명만 넣는다. ' +
           '소금·후추·식용유·간장 같은 기본 조미료는 누구나 있다고 보고 missingIngredients에 넣지 않는다. ' +
-          "time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나. 모든 텍스트는 한국어.",
+          'steps에는 실제로 따라 할 수 있는 조리 과정을 3~8단계로, 각 단계를 한 문장으로 넣는다 (번호는 붙이지 않는다). ' +
+          "servings는 '1인분' 형태. time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나. 모든 텍스트는 한국어.",
       },
       { role: 'user', content: request },
     ],
@@ -92,9 +94,23 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
                   title: { type: 'string' },
                   time: { type: 'string' },
                   difficulty: { type: 'string', enum: ['아주 쉬움', '쉬움', '보통', '어려움'] },
+                  servings: { type: 'string' },
                   warning: { type: 'string' },
                   warningType: { type: 'string', enum: ['alert', 'info'] },
                   tags: { type: 'array', items: { type: 'string' } },
+                  usedIngredients: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      additionalProperties: false,
+                      properties: {
+                        name: { type: 'string' },
+                        amount: { type: 'string' },
+                      },
+                      required: ['name', 'amount'],
+                    },
+                  },
+                  steps: { type: 'array', items: { type: 'string' } },
                   substitutes: {
                     type: 'array',
                     items: {
@@ -107,12 +123,11 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
                       required: ['missing', 'replaceWith'],
                     },
                   },
-                  usedIngredients: { type: 'array', items: { type: 'string' } },
                   missingIngredients: { type: 'array', items: { type: 'string' } },
                 },
                 required: [
-                  'title', 'time', 'difficulty', 'warning', 'warningType', 'tags',
-                  'substitutes', 'usedIngredients', 'missingIngredients',
+                  'title', 'time', 'difficulty', 'servings', 'warning', 'warningType', 'tags',
+                  'usedIngredients', 'steps', 'substitutes', 'missingIngredients',
                 ],
               },
             },

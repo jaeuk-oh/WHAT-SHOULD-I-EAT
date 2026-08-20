@@ -53,6 +53,9 @@ export function subscribeSavedRecipes(
             difficulty: (data.difficulty as string) ?? '',
             author: (data.author as string) ?? '',
             tags: (data.tags as string[]) ?? [],
+            servings: (data.servings as string) ?? undefined,
+            usedIngredients: (data.usedIngredients as SavedRecipe['usedIngredients']) ?? undefined,
+            steps: (data.steps as string[]) ?? undefined,
           };
         }),
       );
@@ -62,6 +65,11 @@ export function subscribeSavedRecipes(
 }
 
 export async function saveRecipe(uid: string, recipe: SavedRecipeInput) {
+  // Firestore는 undefined 필드 저장 시 에러를 내므로 값이 있을 때만 포함한다
+  const detail: Record<string, unknown> = {};
+  if (recipe.servings) detail.servings = recipe.servings;
+  if (recipe.usedIngredients && recipe.usedIngredients.length > 0) detail.usedIngredients = recipe.usedIngredients;
+  if (recipe.steps && recipe.steps.length > 0) detail.steps = recipe.steps;
   await setDoc(doc(savedCol(uid), savedDocId(recipe.title)), {
     title: recipe.title,
     source: recipe.source,
@@ -69,6 +77,7 @@ export async function saveRecipe(uid: string, recipe: SavedRecipeInput) {
     difficulty: recipe.difficulty,
     author: recipe.author,
     tags: recipe.tags,
+    ...detail,
     savedAt: serverTimestamp(),
   });
 }
@@ -238,3 +247,25 @@ export function subscribeHistory(
     onError,
   );
 }
+
+// 임박 재료 알림 수신 여부는 users/{uid} 문서의 notifyExpiry 필드로 관리한다
+export function subscribeNotifyExpiry(
+  uid: string,
+  onChange: (enabled: boolean) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => onChange(snap.data()?.notifyExpiry === true),
+    onError,
+  );
+}
+
+export async function setNotifyExpiry(uid: string, enabled: boolean) {
+  await setDoc(
+    doc(db, 'users', uid),
+    { notifyExpiry: enabled, updatedAt: serverTimestamp() },
+    { merge: true },
+  );
+}
+

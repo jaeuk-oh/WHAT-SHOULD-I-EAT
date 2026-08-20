@@ -317,9 +317,9 @@ export default function RecipeView({
                           </div>
                         </div>
                         <button
-                          onClick={(e) => onToggleSave({ title: recipe.title, source: 'ai', time: recipe.time, difficulty: recipe.difficulty, author: 'AI 추천', tags: recipe.tags }, e)}
-                          aria-label={savedTitles.has(recipe.title) ? '저장 해제' : '레시피 저장'}
+                          onClick={(e) => onToggleSave({ title: recipe.title, source: 'ai', time: recipe.time, difficulty: recipe.difficulty, author: 'AI 추천', tags: recipe.tags, servings: recipe.servings, usedIngredients: recipe.usedIngredients, steps: recipe.steps }, e)}
                           className="p-1 -mt-1 -mr-1 text-outline hover:text-primary transition-colors shrink-0"
+                          aria-label={savedTitles.has(recipe.title) ? '저장 해제' : '레시피 저장'}
                         >
                           <Bookmark size={24} className={savedTitles.has(recipe.title) ? 'fill-primary text-primary' : ''} />
                         </button>

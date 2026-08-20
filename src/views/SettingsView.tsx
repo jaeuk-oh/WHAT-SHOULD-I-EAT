@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Bookmark, ChevronRight, FileText, LogOut, Shield, UserCircle, UserX } from 'lucide-react';
+import { Bell, Bookmark, ChevronRight, FileText, LogOut, Shield, UserCircle, UserX } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { User } from 'firebase/auth';
 import AppHeader from '../components/AppHeader';
@@ -72,7 +72,17 @@ function DeleteAccountModal({ onClose, onDeleted }: { onClose: () => void; onDel
   );
 }
 
-export default function SettingsView({ user, onLogout }: { user: User; onLogout: () => Promise<void> }) {
+export default function SettingsView({
+  user,
+  onLogout,
+  notifyExpiry,
+  onToggleNotify,
+}: {
+  user: User;
+  onLogout: () => Promise<void>;
+  notifyExpiry: boolean;
+  onToggleNotify: () => void;
+}) {
   const navigate = useNavigate();
   const toast = useToast();
   const [showDelete, setShowDelete] = useState(false);
@@ -114,6 +124,18 @@ export default function SettingsView({ user, onLogout }: { user: User; onLogout:
               <span className="flex-1 font-medium">개인정보처리방침</span>
               <ChevronRight size={18} className="text-outline" />
             </Link>
+          </section>
+
+          <section className="rounded-xl overflow-hidden border border-surface-variant mx-5">
+            <button onClick={onToggleNotify} className={`${rowClass} justify-between`}>
+              <span className="flex items-center gap-3">
+                <Bell size={20} className="text-on-surface-variant" />
+                <span className="font-medium">임박 재료 알림</span>
+              </span>
+              <span className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${notifyExpiry ? 'bg-primary' : 'bg-outline-variant'}`}>
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${notifyExpiry ? 'translate-x-4' : ''}`} />
+              </span>
+            </button>
           </section>
 
           <section className="rounded-xl overflow-hidden border border-surface-variant divide-y divide-surface-variant mx-5">

@@ -8,9 +8,11 @@ import {
   consumeIngredient,
   consumeIngredients,
   saveRecipe,
+  setNotifyExpiry,
   subscribeHistory,
   subscribeIngredients,
   subscribeLikes,
+  subscribeNotifyExpiry,
   subscribeSavedRecipes,
   toggleLike as toggleLikeDoc,
   unsaveRecipe,
@@ -80,6 +82,7 @@ export default function App() {
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [notifyExpiry, setNotifyExpiryState] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -87,6 +90,7 @@ export default function App() {
       setSavedRecipes([]);
       setLikedIds(new Set());
       setHistory([]);
+      setNotifyExpiryState(false);
       return;
     }
     const uid = user.uid;
@@ -95,6 +99,7 @@ export default function App() {
       subscribeSavedRecipes(uid, setSavedRecipes, (e) => console.error('저장 레시피 구독 실패:', e)),
       subscribeLikes(uid, setLikedIds, (e) => console.error('좋아요 구독 실패:', e)),
       subscribeHistory(uid, startOfMonth(), setHistory, (e) => console.error('소진 기록 구독 실패:', e)),
+      subscribeNotifyExpiry(uid, setNotifyExpiryState, (e) => console.error('알림 설정 구독 실패:', e)),
     ];
     return () => unsubs.forEach((unsub) => unsub());
   }, [user?.uid]);
@@ -162,6 +167,17 @@ export default function App() {
     }
   };
 
+  const handleToggleNotify = () => {
+    if (!user) return;
+    const next = !notifyExpiry;
+    setNotifyExpiryState(next); // 낙관적 업데이트
+    setNotifyExpiry(user.uid, next).catch((e) => {
+      console.error('알림 설정 저장 실패:', e);
+      setNotifyExpiryState(!next);
+      toast.error('알림 설정 변경에 실패했어요. 잠시 후 다시 시도해주세요.');
+    });
+  };
+
   const handleConsume = (item: IngredientVM, action: ConsumeAction) => {
     if (!user) return;
     consumeIngredient(user.uid, item, action)
@@ -224,7 +240,17 @@ export default function App() {
               }
             />
             <Route path="/saved" element={<SavedView savedRecipes={savedRecipes} onToggleSave={toggleSave} />} />
-            <Route path="/settings" element={<SettingsView user={user} onLogout={logout} />} />
+            <Route
+              path="/settings"
+              element={
+                <SettingsView
+                  user={user}
+                  onLogout={logout}
+                  notifyExpiry={notifyExpiry}
+                  onToggleNotify={handleToggleNotify}
+                />
+              }
+            />
             <Route path="*" element={<Navigate to="/" replace />} />
           </>
         )}
