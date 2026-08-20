@@ -1,21 +1,109 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Bookmark, Check, Circle, Info, Lightbulb, ShoppingCart } from 'lucide-react';
-import { useParams } from 'react-router-dom';
+import { Bookmark, Check, ChefHat, Circle, Info, Lightbulb, Share2, ShoppingCart } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
 import AppHeader from '../components/AppHeader';
 import RecipeVideos from '../components/RecipeVideos';
+import { useToast } from '../components/Toast';
 import { ApiError, fetchRecipeDetail } from '../lib/api';
+import { matchesIngredient } from '../types';
 import type { IngredientVM, RecipeDetail, SavedRecipeInput } from '../types';
+
+/**
+ * 요리를 마치면 쓴 재료가 냉장고에서 빠져야 한다.
+ * 이 연결이 없으면 사용자가 따로 정리해야 하고, 결국 아무도 정리하지 않아
+ * 재고와 소진율 지표가 둘 다 망가진다.
+ */
+function CookedSheet({
+  matched,
+  onClose,
+  onConfirm,
+}: {
+  matched: IngredientVM[];
+  onClose: () => void;
+  onConfirm: (selected: IngredientVM[]) => void;
+}) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set(matched.map((i) => i.id)),
+  );
+
+  const toggle = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const selected = matched.filter((i) => selectedIds.has(i.id));
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        className="bg-surface w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-6 shadow-xl flex flex-col gap-4 max-h-[85vh]"
+      >
+        <div className="space-y-1 text-center">
+          <h3 className="text-xl font-bold text-on-surface">맛있게 드셨나요?</h3>
+          <p className="text-sm text-on-surface-variant">사용한 재료를 냉장고에서 정리할게요.</p>
+        </div>
+
+        <ul className="flex-1 overflow-y-auto space-y-2">
+          {matched.map((item) => {
+            const checked = selectedIds.has(item.id);
+            return (
+              <li key={item.id}>
+                <button
+                  onClick={() => toggle(item.id)}
+                  aria-pressed={checked}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-colors ${
+                    checked ? 'border-primary bg-primary/5' : 'border-surface-variant bg-white'
+                  }`}
+                >
+                  <span className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 ${checked ? 'bg-primary text-white' : 'border border-outline'}`}>
+                    {checked && <Check size={13} />}
+                  </span>
+                  <span className="flex-1 text-left text-sm font-medium">{item.name}</span>
+                  {item.quantity && <span className="text-xs text-on-surface-variant">{item.quantity}</span>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+
+        <p className="text-xs text-outline text-center">일부만 썼다면 체크를 해제하세요.</p>
+
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 h-12 rounded-xl bg-surface-container-high text-on-surface font-semibold hover:bg-surface-dim transition-colors">
+            취소
+          </button>
+          <button
+            onClick={() => onConfirm(selected)}
+            className="flex-1 h-12 rounded-xl bg-primary text-white font-semibold hover:bg-primary/90 transition-colors"
+          >
+            {selected.length > 0 ? `${selected.length}개 정리하기` : '정리 없이 완료'}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 export default function RecipeDetailView({
   ingredients,
   savedTitles,
   onToggleSave,
+  onCooked,
 }: {
   ingredients: IngredientVM[];
   savedTitles: Set<string>;
   onToggleSave: (recipe: SavedRecipeInput, e: React.MouseEvent) => void;
+  onCooked: (items: IngredientVM[]) => Promise<void>;
 }) {
+  const navigate = useNavigate();
+  const toast = useToast();
   const { title: rawTitle } = useParams<{ title: string }>();
   const title = rawTitle ? decodeURIComponent(rawTitle) : '';
 
@@ -23,6 +111,7 @@ export default function RecipeDetailView({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [doneSteps, setDoneSteps] = useState<Set<number>>(new Set());
+  const [showCooked, setShowCooked] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +149,41 @@ export default function RecipeDetailView({
 
   const saved = savedTitles.has(title);
 
+  // 레시피가 요구하는 재료 중 실제로 내 냉장고에 있는 것들
+  const matched = detail
+    ? ingredients.filter((fridge) =>
+        detail.ingredients.some((need) => matchesIngredient(need.name, fridge.name)),
+      )
+    : [];
+
+  const share = async () => {
+    const url = window.location.href;
+    const shareData = { title: `${title} — 냉털메이트`, text: `${title} 만드는 법`, url };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      toast.success('링크를 복사했어요.');
+    } catch (e) {
+      // 사용자가 공유 시트를 닫은 경우는 오류가 아니다
+      if ((e as { name?: string }).name === 'AbortError') return;
+      console.error('공유 실패:', e);
+      toast.error('공유하지 못했어요.');
+    }
+  };
+
+  const handleCooked = async (selected: IngredientVM[]) => {
+    setShowCooked(false);
+    try {
+      await onCooked(selected);
+      navigate('/', { replace: true });
+    } catch {
+      // onCooked 안에서 토스트로 안내한다
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-surface">
       <div className="w-full max-w-md mx-auto bg-surface min-h-screen">
@@ -83,18 +207,27 @@ export default function RecipeDetailView({
               <section className="space-y-3">
                 <div className="flex justify-between items-start gap-2">
                   <h1 className="text-2xl font-bold leading-tight">{detail.title}</h1>
-                  <button
-                    onClick={(e) =>
-                      onToggleSave(
-                        { title: detail.title, source: 'ai', time: detail.time, difficulty: detail.difficulty, author: 'AI 추천', tags: [] },
-                        e,
-                      )
-                    }
-                    aria-label={saved ? '저장 해제' : '레시피 저장'}
-                    className="p-1 shrink-0 text-outline hover:text-primary transition-colors"
-                  >
-                    <Bookmark size={26} className={saved ? 'fill-primary text-primary' : ''} />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={share}
+                      aria-label="레시피 공유"
+                      className="p-1 text-outline hover:text-primary transition-colors"
+                    >
+                      <Share2 size={24} />
+                    </button>
+                    <button
+                      onClick={(e) =>
+                        onToggleSave(
+                          { title: detail.title, source: 'ai', time: detail.time, difficulty: detail.difficulty, author: 'AI 추천', tags: [] },
+                          e,
+                        )
+                      }
+                      aria-label={saved ? '저장 해제' : '레시피 저장'}
+                      className="p-1 text-outline hover:text-primary transition-colors"
+                    >
+                      <Bookmark size={26} className={saved ? 'fill-primary text-primary' : ''} />
+                    </button>
+                  </div>
                 </div>
                 <p className="text-sm text-on-surface-variant leading-relaxed">{detail.summary}</p>
                 <div className="flex flex-wrap gap-2">
@@ -179,10 +312,27 @@ export default function RecipeDetailView({
                   </ul>
                 </section>
               )}
+
+              {matched.length > 0 && (
+                <button
+                  onClick={() => setShowCooked(true)}
+                  className="w-full h-14 rounded-xl bg-primary text-white font-bold shadow-sm flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors"
+                >
+                  <ChefHat size={20} /> 다 만들었어요
+                </button>
+              )}
             </motion.div>
           )}
         </main>
       </div>
+
+      {showCooked && (
+        <CookedSheet
+          matched={matched}
+          onClose={() => setShowCooked(false)}
+          onConfirm={handleCooked}
+        />
+      )}
     </div>
   );
 }

@@ -16,7 +16,14 @@ const SEARCH_URL = 'https://www.googleapis.com/youtube/v3/search';
 const VIDEOS_URL = 'https://www.googleapis.com/youtube/v3/videos';
 const CACHE_COLLECTION = 'youtubeCache';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_RESULTS = 6;
+/** 캐시 스키마가 바뀌면 올린다 — 옛 캐시가 자동으로 무효화된다 */
+const CACHE_VERSION = 'v2';
+/**
+ * search.list는 결과 개수와 무관하게 100 유닛이다.
+ * 그래서 후보를 넉넉히 받아 우리 기준으로 다시 정렬하는 편이 공짜로 이득이다.
+ */
+const CANDIDATE_COUNT = 25;
+const RETURN_COUNT = 6;
 
 export interface YoutubeVideo {
   videoId: string;
@@ -26,6 +33,8 @@ export interface YoutubeVideo {
   /** "12:34" 형태. 알 수 없으면 빈 문자열 */
   duration: string;
   viewCount: number;
+  /** 이 영상이 위로 올라온 이유. 없으면 빈 문자열 */
+  reason: string;
 }
 
 interface SearchResponse {
@@ -46,7 +55,56 @@ function normalizeQuery(query: string): string {
 }
 
 function cacheKey(query: string): string {
-  return createHash('sha256').update(normalizeQuery(query)).digest('hex').slice(0, 32);
+  return createHash('sha256')
+    .update(`${CACHE_VERSION}:${normalizeQuery(query)}`)
+    .digest('hex')
+    .slice(0, 32);
+}
+
+/** ISO 8601 재생시간을 초로. 파싱 실패 시 0 */
+function durationSeconds(iso: string | undefined): number {
+  if (!iso) return 0;
+  const m = /^P(?:\d+D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso);
+  if (!m) return 0;
+  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0);
+}
+
+/**
+ * 같은 요리의 영상끼리는 재료가 거의 같다. 그래서 여기서 재료는 기준이 아니고,
+ * "믿을 만한가(조회수) · 보기 좋은 길이인가 · 정말 그 요리인가"로 고른다.
+ */
+function scoreVideo(
+  video: { title: string; viewCount: number; durationSec: number },
+  dishTokens: string[],
+): number {
+  // 조회수는 편차가 커서 로그로 누른다 (1000만 회 ≈ 1.0)
+  const views = Math.min(1, Math.log10(video.viewCount + 1) / 7);
+
+  // 60초 미만은 쇼츠라 조리법을 못 따라가고, 30분 넘으면 브이로그인 경우가 많다
+  const sec = video.durationSec;
+  let duration: number;
+  if (sec === 0) duration = 0.5;
+  else if (sec < 90) duration = 0.1;
+  else if (sec <= 240) duration = 0.8;
+  else if (sec <= 900) duration = 1;
+  else if (sec <= 1800) duration = 0.6;
+  else duration = 0.2;
+
+  // 제목에 요리 이름이 실제로 들어 있는가 (엉뚱한 영상 걸러내기)
+  const lowerTitle = video.title.toLowerCase();
+  const matched = dishTokens.filter((t) => lowerTitle.includes(t)).length;
+  const titleMatch = dishTokens.length === 0 ? 0.5 : matched / dishTokens.length;
+
+  return 0.4 * views + 0.3 * duration + 0.3 * titleMatch;
+}
+
+function reasonFor(video: { viewCount: number; durationSec: number }, rank: number): string {
+  if (video.viewCount >= 1_000_000) return '조회수 100만+';
+  if (video.durationSec > 0 && video.durationSec <= 600 && video.viewCount >= 50_000) {
+    return '짧고 인기 있어요';
+  }
+  if (rank === 0) return '가장 볼만해요';
+  return '';
 }
 
 /** ISO 8601 재생시간(PT1H2M3S)을 "1:02:03" 으로 바꾼다. */
@@ -107,7 +165,7 @@ export async function searchRecipeVideos(query: string): Promise<YoutubeVideo[]>
       part: 'snippet',
       q: normalizeQuery(query),
       type: 'video',
-      maxResults: String(MAX_RESULTS),
+      maxResults: String(CANDIDATE_COUNT),
       // 한국 요리 영상을 우선 노출한다
       regionCode: 'KR',
       relevanceLanguage: 'ko',
@@ -130,7 +188,7 @@ export async function searchRecipeVideos(query: string): Promise<YoutubeVideo[]>
     if (ids.length === 0) return [];
 
     // 재생시간·조회수는 videos.list에만 있다 (1 유닛으로 저렴하다)
-    const detailMap = new Map<string, { duration: string; viewCount: number }>();
+    const detailMap = new Map<string, { duration: string; durationSec: number; viewCount: number }>();
     try {
       const videosRes = await fetch(
         `${VIDEOS_URL}?${new URLSearchParams({
@@ -145,6 +203,7 @@ export async function searchRecipeVideos(query: string): Promise<YoutubeVideo[]>
           if (!item.id) continue;
           detailMap.set(item.id, {
             duration: formatDuration(item.contentDetails?.duration),
+            durationSec: durationSeconds(item.contentDetails?.duration),
             viewCount: Number(item.statistics?.viewCount ?? 0),
           });
         }
@@ -153,7 +212,13 @@ export async function searchRecipeVideos(query: string): Promise<YoutubeVideo[]>
       console.error('[youtube] videos 상세 조회 실패 (메타데이터 없이 진행):', e);
     }
 
-    const videos: YoutubeVideo[] = (search.items ?? [])
+    // 요리 이름에서 검색용 접미사를 뺀 토큰 (제목 일치 판정용)
+    const dishTokens = normalizeQuery(query)
+      .replace(/레시피|만들기|만드는\s*법/g, ' ')
+      .split(/\s+/)
+      .filter((t) => t.length >= 2);
+
+    const candidates = (search.items ?? [])
       .map((item) => {
         const videoId = item.id?.videoId;
         if (!videoId) return null;
@@ -168,10 +233,25 @@ export async function searchRecipeVideos(query: string): Promise<YoutubeVideo[]>
             snippet.thumbnails?.medium?.url ?? snippet.thumbnails?.default?.url ?? '',
           ),
           duration: extra?.duration ?? '',
+          durationSec: extra?.durationSec ?? 0,
           viewCount: extra?.viewCount ?? 0,
         };
       })
-      .filter((v): v is YoutubeVideo => v !== null);
+      .filter((v): v is NonNullable<typeof v> => v !== null);
+
+    const videos: YoutubeVideo[] = candidates
+      .map((v) => ({ v, score: scoreVideo(v, dishTokens) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, RETURN_COUNT)
+      .map(({ v }, rank) => ({
+        videoId: v.videoId,
+        title: v.title,
+        channelTitle: v.channelTitle,
+        thumbnail: v.thumbnail,
+        duration: v.duration,
+        viewCount: v.viewCount,
+        reason: reasonFor(v, rank),
+      }));
 
     await writeCache(key, query, videos);
     return videos;

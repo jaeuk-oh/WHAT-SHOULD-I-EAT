@@ -6,6 +6,7 @@ import { useToast } from './components/Toast';
 import {
   addIngredients,
   consumeIngredient,
+  consumeIngredients,
   saveRecipe,
   subscribeHistory,
   subscribeIngredients,
@@ -146,6 +147,21 @@ export default function App() {
     }
   };
 
+  /** 요리를 마쳤을 때: 쓴 재료를 한 번에 소진 처리한다. */
+  const handleCooked = async (items: IngredientVM[]) => {
+    if (!user) return;
+    try {
+      await consumeIngredients(user.uid, items, 'eaten');
+      toast.success(
+        items.length > 0 ? `잘 드셨어요! 재료 ${items.length}개를 정리했어요.` : '맛있게 드셨길 바라요!',
+      );
+    } catch (e) {
+      console.error('요리 완료 처리 실패:', e);
+      toast.error('재료 정리에 실패했어요. 잠시 후 다시 시도해주세요.');
+      throw e;
+    }
+  };
+
   const handleConsume = (item: IngredientVM, action: ConsumeAction) => {
     if (!user) return;
     consumeIngredient(user.uid, item, action)
@@ -203,6 +219,7 @@ export default function App() {
                   ingredients={ingredientVMs}
                   savedTitles={savedTitles}
                   onToggleSave={toggleSave}
+                  onCooked={handleCooked}
                 />
               }
             />

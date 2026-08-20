@@ -70,6 +70,11 @@ function VideoCard({ video }: { video: YoutubeVideo }) {
             {video.duration}
           </span>
         )}
+        {video.reason && (
+          <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-primary text-white text-xs font-bold">
+            {video.reason}
+          </span>
+        )}
       </button>
       <div className="p-3 space-y-1">
         <p className="text-sm font-semibold text-on-surface line-clamp-2 leading-snug">{video.title}</p>

@@ -7,15 +7,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!uid) return;
 
   const body = (req.body ?? {}) as Partial<RecommendInput>;
-  if (!Array.isArray(body.ingredients) || body.ingredients.length === 0) {
-    return res.status(400).json({ error: '재료를 먼저 등록해주세요.' });
-  }
-  if (body.ingredients.length > 100) {
+  const rawIngredients = Array.isArray(body.ingredients) ? body.ingredients : [];
+  if (rawIngredients.length > 100) {
     return res.status(400).json({ error: '재료가 너무 많습니다.' });
   }
 
   const input: RecommendInput = {
-    ingredients: body.ingredients.slice(0, 100).map((i) => ({
+    // 재료가 없어도 거절하지 않는다 — 기본 메뉴를 추천한다
+    ingredients: rawIngredients.slice(0, 100).map((i) => ({
       name: String(i.name ?? '').slice(0, 50),
       category: String(i.category ?? '기타').slice(0, 10),
       daysLeft: Math.max(0, Math.min(999, Number(i.daysLeft) || 0)),

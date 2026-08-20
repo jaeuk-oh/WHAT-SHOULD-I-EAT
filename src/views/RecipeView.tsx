@@ -1,13 +1,21 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertTriangle, Bookmark, ChefHat, ChevronRight, Info, RefreshCw, Send, Wand2 } from 'lucide-react';
+import { AlertTriangle, Bookmark, ChefHat, Check, ChevronRight, Info, RefreshCw, Send, ShoppingCart, SlidersHorizontal, Wand2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import AppHeader from '../components/AppHeader';
 import { useToast } from '../components/Toast';
 import { fetchRecommendations } from '../lib/api';
 import { subscribeRecipes } from '../lib/db';
 import { recipePath } from '../lib/paths';
-import type { CommunityRecipe, IngredientVM, RecommendedRecipe, SavedRecipeInput } from '../types';
+import {
+  RECIPE_SORT_LABELS,
+  sortRecipes,
+  type CommunityRecipe,
+  type IngredientVM,
+  type RecipeSort,
+  type RecommendedRecipe,
+  type SavedRecipeInput,
+} from '../types';
 
 const CATEGORIES = ['전체', '다이어트', '간단한', '자극적인', '비건'];
 const TABS = ['맞춤추천', '커뮤니티', '셀럽/쉐프'] as const;
@@ -28,6 +36,35 @@ function HeartButton({ onToggle, likes, liked }: { onToggle: () => void; likes: 
       </button>
       <span className="text-xs font-bold text-on-surface-variant mt-1">{likes.toLocaleString()}</span>
     </div>
+  );
+}
+
+/**
+ * 이 추천이 왜 나왔는지 한 줄로 보여준다.
+ * 사용자는 "정렬이 좋아졌다"를 못 느끼지만, "왜 이게 위에 있는지"는 바로 느낀다.
+ */
+function CoverageBadge({ recipe }: { recipe: RecommendedRecipe }) {
+  const used = recipe.usedIngredients.length;
+  const missing = recipe.missingIngredients;
+
+  if (missing.length === 0) {
+    return (
+      <p className="text-sm font-semibold text-primary flex items-center gap-1.5">
+        <Check size={15} className="shrink-0" />
+        지금 바로 만들 수 있어요{used > 0 && ` · 내 재료 ${used}개 사용`}
+      </p>
+    );
+  }
+
+  return (
+    <p className="text-sm text-on-surface-variant flex items-start gap-1.5">
+      <ShoppingCart size={15} className="shrink-0 mt-0.5 text-tertiary" />
+      <span>
+        {used > 0 && <><b className="text-on-surface">내 재료 {used}개</b> 사용 · </>}
+        <b className="text-tertiary">{missing.slice(0, 3).join(', ')}</b>
+        {missing.length > 3 ? ` 외 ${missing.length - 3}개` : ''}만 있으면 돼요
+      </span>
+    </p>
   );
 }
 
@@ -57,8 +94,16 @@ export default function RecipeView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [shared, setShared] = useState<CommunityRecipe[] | null>(null);
+  const [sort, setSort] = useState<RecipeSort>('recommended');
+  const [onlyAvailable, setOnlyAvailable] = useState(false);
 
   const urgent = ingredients.filter((i) => i.daysLeft <= 2);
+
+  const visibleRecipes = sortRecipes(
+    onlyAvailable ? recipes.filter((r) => r.missingIngredients.length === 0) : recipes,
+    sort,
+  );
+  const hiddenByFilter = recipes.length - visibleRecipes.length;
   const communityList = (shared ?? []).filter((r) => r.type === 'community');
   const celebList = (shared ?? []).filter((r) => r.type === 'celeb');
 
@@ -191,8 +236,47 @@ export default function RecipeView({
                 </p>
               </section>
 
+              {!loading && !error && recipes.length > 0 && (
+                <div className="flex flex-col gap-3 -mt-2">
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-5 px-5" style={{ scrollbarWidth: 'none' }}>
+                    <SlidersHorizontal size={16} className="text-outline shrink-0" aria-hidden />
+                    {(Object.keys(RECIPE_SORT_LABELS) as RecipeSort[]).map((key) => (
+                      <button
+                        key={key}
+                        onClick={() => setSort(key)}
+                        aria-pressed={sort === key}
+                        className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                          sort === key
+                            ? 'bg-on-surface text-white'
+                            : 'bg-white text-on-surface-variant border border-outline-variant'
+                        }`}
+                      >
+                        {RECIPE_SORT_LABELS[key]}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => setOnlyAvailable((v) => !v)}
+                    aria-pressed={onlyAvailable}
+                    className={`self-start px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                      onlyAvailable
+                        ? 'bg-primary text-white'
+                        : 'bg-white text-on-surface-variant border border-outline-variant'
+                    }`}
+                  >
+                    <Check size={13} /> 지금 다 있는 것만
+                  </button>
+                </div>
+              )}
+
               {loading ? (
                 <section className="flex flex-col gap-4" aria-busy="true">
+                  <p className="text-sm text-on-surface-variant flex items-center gap-2">
+                    <RefreshCw size={15} className="animate-spin text-primary" />
+                    {urgent.length > 0
+                      ? `${urgent[0].name}부터 쓸 메뉴를 찾고 있어요...`
+                      : '냉장고 재료로 만들 메뉴를 찾고 있어요...'}
+                  </p>
                   {[0, 1, 2].map((i) => (
                     <div key={i} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant animate-pulse space-y-3">
                       <div className="h-6 bg-surface-container-high rounded w-2/3" />
@@ -210,7 +294,15 @@ export default function RecipeView({
                 </section>
               ) : (
                 <section className="flex flex-col gap-4">
-                  {recipes.map((recipe) => (
+                  {visibleRecipes.length === 0 && (
+                    <div className="bg-white rounded-xl p-6 text-center space-y-2 border border-surface-variant">
+                      <p className="text-sm text-on-surface-variant">지금 재료만으로 만들 수 있는 메뉴가 없어요.</p>
+                      <button onClick={() => setOnlyAvailable(false)} className="text-sm text-primary font-semibold">
+                        조금 사야 하는 메뉴도 보기
+                      </button>
+                    </div>
+                  )}
+                  {visibleRecipes.map((recipe) => (
                     <article
                       key={recipe.title}
                       onClick={() => openDetail(recipe.title)}
@@ -232,6 +324,7 @@ export default function RecipeView({
                           <Bookmark size={24} className={savedTitles.has(recipe.title) ? 'fill-primary text-primary' : ''} />
                         </button>
                       </div>
+                      <CoverageBadge recipe={recipe} />
                       <p className="text-sm font-semibold text-tertiary-container flex items-center gap-1">
                         {recipe.warningType === 'alert' ? <AlertTriangle size={16} /> : <Info size={16} />}
                         {recipe.warning}
@@ -260,6 +353,14 @@ export default function RecipeView({
                       </span>
                     </article>
                   ))}
+                  {onlyAvailable && hiddenByFilter > 0 && (
+                    <button
+                      onClick={() => setOnlyAvailable(false)}
+                      className="text-sm text-on-surface-variant py-2 hover:text-primary transition-colors"
+                    >
+                      재료가 조금 부족한 메뉴 {hiddenByFilter}개 더 보기
+                    </button>
+                  )}
                 </section>
               )}
             </motion.div>

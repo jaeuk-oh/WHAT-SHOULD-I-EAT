@@ -194,6 +194,22 @@ export async function consumeIngredient(uid: string, ingredient: Ingredient, act
   await batch.commit();
 }
 
+/** 여러 재료를 한 번에 소진 처리한다. 요리를 마쳤을 때 쓴다. */
+export async function consumeIngredients(uid: string, items: Ingredient[], action: ConsumeAction) {
+  if (items.length === 0) return;
+  const batch = writeBatch(db);
+  for (const item of items) {
+    batch.delete(doc(ingredientsCol(uid), item.id));
+    batch.set(doc(historyCol(uid)), {
+      name: item.name,
+      category: item.category,
+      action,
+      at: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
+
 /** 지정 시점 이후의 소진 기록. 절약 리포트에 쓴다. */
 export function subscribeHistory(
   uid: string,
