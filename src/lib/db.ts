@@ -10,14 +10,17 @@ import {
   setDoc,
   Timestamp,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import {
   expiryFromDays,
   type CommunityRecipe,
+  type ConsumptionAction,
   type Ingredient,
   type IngredientCategory,
+  type MonthlyStats,
   type NewIngredient,
   type RecipeSource,
   type SavedRecipe,
@@ -50,6 +53,9 @@ export function subscribeSavedRecipes(
             difficulty: (data.difficulty as string) ?? '',
             author: (data.author as string) ?? '',
             tags: (data.tags as string[]) ?? [],
+            servings: (data.servings as string) ?? undefined,
+            usedIngredients: (data.usedIngredients as SavedRecipe['usedIngredients']) ?? undefined,
+            steps: (data.steps as string[]) ?? undefined,
           };
         }),
       );
@@ -59,6 +65,11 @@ export function subscribeSavedRecipes(
 }
 
 export async function saveRecipe(uid: string, recipe: SavedRecipeInput) {
+  // Firestore는 undefined 필드 저장 시 에러를 내므로 값이 있을 때만 포함한다
+  const detail: Record<string, unknown> = {};
+  if (recipe.servings) detail.servings = recipe.servings;
+  if (recipe.usedIngredients && recipe.usedIngredients.length > 0) detail.usedIngredients = recipe.usedIngredients;
+  if (recipe.steps && recipe.steps.length > 0) detail.steps = recipe.steps;
   await setDoc(doc(savedCol(uid), savedDocId(recipe.title)), {
     title: recipe.title,
     source: recipe.source,
@@ -66,6 +77,7 @@ export async function saveRecipe(uid: string, recipe: SavedRecipeInput) {
     difficulty: recipe.difficulty,
     author: recipe.author,
     tags: recipe.tags,
+    ...detail,
     savedAt: serverTimestamp(),
   });
 }
@@ -155,4 +167,87 @@ export async function addIngredients(uid: string, items: NewIngredient[]) {
 
 export async function deleteIngredient(uid: string, id: string) {
   await deleteDoc(doc(ingredientsCol(uid), id));
+}
+
+// 임박 재료 알림 수신 여부는 users/{uid} 문서의 notifyExpiry 필드로 관리한다
+export function subscribeNotifyExpiry(
+  uid: string,
+  onChange: (enabled: boolean) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => onChange(snap.data()?.notifyExpiry === true),
+    onError,
+  );
+}
+
+export async function setNotifyExpiry(uid: string, enabled: boolean) {
+  await setDoc(
+    doc(db, 'users', uid),
+    { notifyExpiry: enabled, updatedAt: serverTimestamp() },
+    { merge: true },
+  );
+}
+
+const logCol = (uid: string) => collection(db, 'users', uid, 'log');
+
+// 재료 소비 신호 한 건 기록 (요리/폐기). 삭제 플로우에서 사용한다.
+export async function logConsumption(
+  uid: string,
+  entry: { name: string; category: IngredientCategory; action: ConsumptionAction },
+) {
+  await setDoc(doc(logCol(uid)), {
+    name: entry.name,
+    category: entry.category,
+    action: entry.action,
+    at: serverTimestamp(),
+  });
+}
+
+// "이거 만들었어요": 여러 재료를 한 번에 재고에서 빼고 요리 로그로 남긴다
+export async function consumeIngredients(
+  uid: string,
+  items: { id: string; name: string; category: IngredientCategory }[],
+) {
+  if (items.length === 0) return;
+  const batch = writeBatch(db);
+  for (const item of items) {
+    batch.delete(doc(ingredientsCol(uid), item.id));
+    batch.set(doc(logCol(uid)), {
+      name: item.name,
+      category: item.category,
+      action: 'cooked',
+      at: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
+
+function startOfMonth(): Date {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+}
+
+// 이번 달 소비 로그를 집계해 살린/버린 재료 수를 실시간으로 돌려준다
+export function subscribeMonthlyStats(
+  uid: string,
+  onChange: (stats: MonthlyStats) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(logCol(uid), where('at', '>=', Timestamp.fromDate(startOfMonth())));
+  return onSnapshot(
+    q,
+    (snap) => {
+      let cooked = 0;
+      let discarded = 0;
+      snap.docs.forEach((d) => {
+        const action = d.data().action as ConsumptionAction;
+        if (action === 'cooked') cooked += 1;
+        else if (action === 'discarded') discarded += 1;
+      });
+      onChange({ cooked, discarded });
+    },
+    onError,
+  );
 }

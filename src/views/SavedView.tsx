@@ -1,6 +1,8 @@
-import React from 'react';
-import { ArrowLeft, Bookmark } from 'lucide-react';
-import type { SavedRecipe, SavedRecipeInput } from '../types';
+import React, { useState } from 'react';
+import { AnimatePresence } from 'motion/react';
+import { ArrowLeft, Bookmark, ChevronRight } from 'lucide-react';
+import type { IngredientCategory, IngredientVM, SavedRecipe, SavedRecipeInput } from '../types';
+import RecipeDetailModal from './RecipeDetailModal';
 
 const sourceLabel: Record<SavedRecipe['source'], string> = {
   ai: 'AI 추천',
@@ -8,11 +10,15 @@ const sourceLabel: Record<SavedRecipe['source'], string> = {
   celeb: '셀럽/쉐프',
 };
 
-export default function SavedView({ onBack, savedRecipes, onToggleSave }: {
+export default function SavedView({ onBack, savedRecipes, ingredients, onToggleSave, onCook }: {
   onBack: () => void;
   savedRecipes: SavedRecipe[];
+  ingredients: IngredientVM[];
   onToggleSave: (recipe: SavedRecipeInput, e: React.MouseEvent) => void;
+  onCook: (items: { id: string; name: string; category: IngredientCategory }[]) => Promise<void>;
 }) {
+  const [detail, setDetail] = useState<SavedRecipe | null>(null);
+  const hasDetail = (r: SavedRecipe) => (r.steps && r.steps.length > 0) || (r.usedIngredients && r.usedIngredients.length > 0);
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-surface">
       <div className="w-full max-w-md mx-auto bg-surface min-h-screen relative">
@@ -32,7 +38,11 @@ export default function SavedView({ onBack, savedRecipes, onToggleSave }: {
             </div>
           ) : (
             savedRecipes.map((recipe) => (
-              <article key={recipe.id} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex flex-col gap-3">
+              <article
+                key={recipe.id}
+                onClick={() => hasDetail(recipe) && setDetail(recipe)}
+                className={`bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex flex-col gap-3 ${hasDetail(recipe) ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+              >
                 <div className="flex justify-between items-start">
                   <div className="flex-1 pr-2">
                     <h2 className="text-lg font-bold text-on-surface leading-tight mb-1">{recipe.title}</h2>
@@ -50,15 +60,42 @@ export default function SavedView({ onBack, savedRecipes, onToggleSave }: {
                       </div>
                     )}
                   </div>
-                  <button onClick={(e) => onToggleSave(recipe, e)} className="p-1 -mt-1 -mr-1 text-primary transition-colors shrink-0">
+                  <button onClick={(e) => onToggleSave(recipe, e)} className="p-1 -mt-1 -mr-1 text-primary transition-colors shrink-0" aria-label="저장 해제">
                     <Bookmark size={24} className="fill-primary" />
                   </button>
                 </div>
+                {hasDetail(recipe) && (
+                  <div className="flex justify-end">
+                    <span className="text-sm font-semibold text-primary flex items-center gap-0.5">레시피 보기 <ChevronRight size={16} /></span>
+                  </div>
+                )}
               </article>
             ))
           )}
         </main>
       </div>
+
+      <AnimatePresence>
+        {detail && (
+          <RecipeDetailModal
+            detail={{
+              title: detail.title,
+              subtitle: `${sourceLabel[detail.source]}${detail.author && detail.source !== 'ai' ? ` · ${detail.author}` : ''}`,
+              time: detail.time,
+              difficulty: detail.difficulty,
+              servings: detail.servings,
+              tags: detail.tags,
+              usedIngredients: detail.usedIngredients,
+              steps: detail.steps,
+            }}
+            saved={true}
+            onToggleSave={(e) => { onToggleSave(detail, e); setDetail(null); }}
+            myIngredients={ingredients}
+            onCook={async (items) => { await onCook(items); setDetail(null); }}
+            onClose={() => setDetail(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

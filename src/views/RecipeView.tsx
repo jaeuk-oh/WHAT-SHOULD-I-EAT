@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { motion } from 'motion/react';
-import { AlertTriangle, ArrowLeft, Bookmark, ChefHat, Info, RefreshCw, Send, Wand2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { AlertTriangle, ArrowLeft, Bookmark, ChefHat, ChevronRight, Info, RefreshCw, Send, Wand2 } from 'lucide-react';
 import { fetchRecommendations } from '../lib/api';
 import { likeRecipe, seedRecipes, subscribeRecipes } from '../lib/db';
-import type { CommunityRecipe, IngredientVM, RecommendedRecipe, SavedRecipeInput } from '../types';
+import type { CommunityRecipe, IngredientCategory, IngredientVM, RecommendedRecipe, SavedRecipeInput } from '../types';
+import RecipeDetailModal from './RecipeDetailModal';
 
 const categories = ['전체', '다이어트', '간단한', '자극적인', '비건'];
 
@@ -39,11 +40,12 @@ const HeartButton = ({ onLike, likes }: { onLike: () => void; likes: number }) =
   </div>
 );
 
-export default function RecipeView({ onBack, ingredients, savedTitles, onToggleSave }: {
+export default function RecipeView({ onBack, ingredients, savedTitles, onToggleSave, onCook }: {
   onBack: () => void;
   ingredients: IngredientVM[];
   savedTitles: Set<string>;
   onToggleSave: (recipe: SavedRecipeInput, e: React.MouseEvent) => void;
+  onCook: (items: { id: string; name: string; category: IngredientCategory }[]) => Promise<void>;
 }) {
   const [currentTab, setCurrentTab] = useState<'맞춤추천' | '커뮤니티' | '셀럽/쉐프'>('맞춤추천');
   const [activeCategory, setActiveCategory] = useState('전체');
@@ -53,6 +55,7 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
   const [error, setError] = useState<string | null>(null);
   const [shared, setShared] = useState<CommunityRecipe[] | null>(null);
   const [seeding, setSeeding] = useState(false);
+  const [detailRecipe, setDetailRecipe] = useState<RecommendedRecipe | null>(null);
 
   const urgent = ingredients.filter(i => i.daysLeft <= 2);
   const communityList = (shared ?? []).filter(r => r.type === 'community');
@@ -226,7 +229,11 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
               ) : (
                 <section className="flex flex-col gap-4">
                   {recipes.map(recipe => (
-                    <article key={recipe.title} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex flex-col gap-3 hover:shadow-md transition-shadow">
+                    <article
+                      key={recipe.title}
+                      onClick={() => setDetailRecipe(recipe)}
+                      className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex flex-col gap-3 hover:shadow-md transition-shadow cursor-pointer"
+                    >
                       <div className="flex justify-between items-start">
                         <div className="flex-1 pr-2">
                           <h2 className="text-xl font-semibold">{recipe.title}</h2>
@@ -236,8 +243,9 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
                           </div>
                         </div>
                         <button
-                          onClick={(e) => onToggleSave({ title: recipe.title, source: 'ai', time: recipe.time, difficulty: recipe.difficulty, author: 'AI 추천', tags: recipe.tags }, e)}
+                          onClick={(e) => onToggleSave({ title: recipe.title, source: 'ai', time: recipe.time, difficulty: recipe.difficulty, author: 'AI 추천', tags: recipe.tags, servings: recipe.servings, usedIngredients: recipe.usedIngredients, steps: recipe.steps }, e)}
                           className="p-1 -mt-1 -mr-1 text-outline hover:text-primary transition-colors shrink-0"
+                          aria-label={savedTitles.has(recipe.title) ? '저장 해제' : '레시피 저장'}
                         >
                           <Bookmark size={24} className={savedTitles.has(recipe.title) ? 'fill-primary text-primary' : ''} />
                         </button>
@@ -253,18 +261,14 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
                           </span>
                         ))}
                       </div>
-                      {recipe.substitutes.length > 0 && (
-                        <div className="mt-2 p-3 bg-surface-container-low rounded-lg border border-surface-variant flex flex-col gap-1">
-                          <span className="text-xs font-semibold text-on-surface-variant flex items-center gap-1">
-                            <RefreshCw size={14} /> 대체 식재료 추천
-                          </span>
-                          {recipe.substitutes.map((sub, idx) => (
-                            <span key={idx} className="text-sm text-on-surface">
-                              <span className="line-through text-outline">{sub.missing}</span> 대신 <b className="text-primary">{sub.replaceWith}</b>
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      <div className="flex items-center justify-between mt-1 pt-3 border-t border-surface-variant">
+                        <span className="text-xs text-on-surface-variant">
+                          {recipe.substitutes.length > 0 ? `대체 재료 ${recipe.substitutes.length}개 · ` : ''}조리법 {recipe.steps.length}단계
+                        </span>
+                        <span className="text-sm font-semibold text-primary flex items-center gap-0.5">
+                          레시피 보기 <ChevronRight size={16} />
+                        </span>
+                      </div>
                     </article>
                   ))}
                 </section>
@@ -353,6 +357,30 @@ export default function RecipeView({ onBack, ingredients, savedTitles, onToggleS
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {detailRecipe && (
+          <RecipeDetailModal
+            detail={{
+              title: detailRecipe.title,
+              time: detailRecipe.time,
+              difficulty: detailRecipe.difficulty,
+              servings: detailRecipe.servings,
+              warning: detailRecipe.warning,
+              warningType: detailRecipe.warningType,
+              tags: detailRecipe.tags,
+              usedIngredients: detailRecipe.usedIngredients,
+              steps: detailRecipe.steps,
+              substitutes: detailRecipe.substitutes,
+            }}
+            saved={savedTitles.has(detailRecipe.title)}
+            onToggleSave={(e) => onToggleSave({ title: detailRecipe.title, source: 'ai', time: detailRecipe.time, difficulty: detailRecipe.difficulty, author: 'AI 추천', tags: detailRecipe.tags, servings: detailRecipe.servings, usedIngredients: detailRecipe.usedIngredients, steps: detailRecipe.steps }, e)}
+            myIngredients={ingredients}
+            onCook={async (items) => { await onCook(items); setDetailRecipe(null); }}
+            onClose={() => setDetailRecipe(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
