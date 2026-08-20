@@ -137,14 +137,6 @@ export interface SavedRecipe {
 
 export type SavedRecipeInput = Omit<SavedRecipe, 'id'>;
 
-// 재료가 재고에서 빠질 때 남기는 신호: 요리에 썼거나(cooked) 상해서 버렸거나(discarded)
-export type ConsumptionAction = 'cooked' | 'discarded';
-
-export interface MonthlyStats {
-  cooked: number;
-  discarded: number;
-}
-
 export interface CommunityRecipe {
   id: string;
   title: string;
