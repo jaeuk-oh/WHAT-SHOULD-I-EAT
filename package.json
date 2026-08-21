@@ -11,7 +11,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "seed": "tsx scripts/seed-recipes.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-naengteol \"node --import tsx --test tests/firestore-rules.test.ts\""
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
@@ -30,6 +31,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.17",
@@ -37,6 +39,7 @@
     "@vercel/node": "^5.8.24",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "firebase-tools": "^15.28.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
