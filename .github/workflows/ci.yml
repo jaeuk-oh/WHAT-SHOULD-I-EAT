@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: 타입 체크
+        run: npm run typecheck
+
+      - name: 프로덕션 빌드
+        run: npm run build
+
+      # 과거에 ESM 확장자 누락으로 배포 직후 모든 API가 500이 난 적이 있다.
+      # api/ 안의 상대 임포트에 .js가 빠지면 여기서 잡는다.
+      - name: api/ ESM 임포트 확장자 검사
+        run: |
+          if grep -rnE "from '\./[A-Za-z_-]+'" api/; then
+            echo "::error::api/ 의 상대 임포트에는 .js 확장자가 필요합니다 (Vercel Node ESM 런타임)."
+            exit 1
+          fi
+          echo "OK"

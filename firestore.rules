@@ -1,15 +1,135 @@
 rules_version = '2';
+
+// 냉털메이트 보안 규칙
+//
+// 원칙
+//  1. 사용자 소유 데이터는 본인만 읽고 쓴다.
+//  2. 사용량 카운터(usage)는 클라이언트가 절대 쓸 수 없다 — 서버(Admin SDK)만 쓴다.
+//  3. 공유 레시피(recipes)는 누구나 읽지만 클라이언트는 생성·삭제할 수 없고,
+//     "좋아요 +1 / -1" 한 가지 변경만 예외로 허용한다.
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // ---------- 사용자 프로필 ----------
+
+    function validProfile() {
+      return incoming().keys().hasOnly(['email', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+        && (!('displayName' in incoming()) || incoming().displayName == null || incoming().displayName is string)
+        && (!('email' in incoming()) || incoming().email == null || incoming().email is string);
+    }
+
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      match /{document=**} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) && validProfile();
+      allow delete: if isOwner(userId);
+
+      // ---------- 재료 ----------
+
+      function validIngredient() {
+        return incoming().keys().hasOnly(['name', 'category', 'quantity', 'expiresAt', 'createdAt'])
+          && incoming().name is string
+          && incoming().name.size() > 0 && incoming().name.size() <= 50
+          && incoming().category in ['유제품', '콩류', '채소류', '육류', '과일', '기타']
+          && (!('quantity' in incoming()) || (incoming().quantity is string && incoming().quantity.size() <= 20))
+          && incoming().expiresAt is timestamp;
+      }
+
+      match /ingredients/{ingredientId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId) && validIngredient();
+      }
+
+      // ---------- 저장한 레시피 ----------
+
+      function validSaved() {
+        return incoming().keys().hasOnly(['title', 'source', 'time', 'difficulty', 'author', 'tags', 'savedAt'])
+          && incoming().title is string
+          && incoming().title.size() > 0 && incoming().title.size() <= 100
+          && incoming().source in ['ai', 'community', 'celeb']
+          && incoming().tags is list && incoming().tags.size() <= 20;
+      }
+
+      match /saved/{savedId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId) && validSaved();
+      }
+
+      // ---------- 소진 기록 ----------
+      // 절약 리포트의 원천 데이터. 한 번 쓰면 고치지 못하게 해서 기록을 신뢰할 수 있게 한다.
+
+      function validHistory() {
+        return incoming().keys().hasOnly(['name', 'category', 'action', 'at'])
+          && incoming().name is string && incoming().name.size() <= 50
+          && incoming().category in ['유제품', '콩류', '채소류', '육류', '과일', '기타']
+          && incoming().action in ['eaten', 'discarded'];
+      }
+
+      match /history/{entryId} {
+        allow read, delete: if isOwner(userId);
+        allow create: if isOwner(userId) && validHistory();
+        allow update: if false;
+      }
+
+      // ---------- 좋아요 표시 (중복 방지용 마커) ----------
+
+      match /likes/{recipeId} {
+        allow read, create, delete: if isOwner(userId);
+        allow update: if false;
       }
     }
+
+    // ---------- 사용량 카운터 ----------
+    // 본인 잔여 횟수를 보여주기 위한 읽기만 허용하고, 쓰기는 서버(Admin SDK) 전용이다.
+
+    match /usage/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
+    // ---------- 유튜브 검색 캐시 ----------
+    // 서버(Admin SDK) 전용. 클라이언트는 읽지도 쓰지도 않는다.
+
+    match /youtubeCache/{queryKey} {
+      allow read, write: if false;
+    }
+
+    // ---------- 공유 레시피 ----------
+
     match /recipes/{recipeId} {
+
+      // 좋아요 외의 필드는 건드릴 수 없다
+      function onlyLikesChanged() {
+        return incoming().diff(resource.data).affectedKeys().hasOnly(['likes'])
+          && incoming().likes is int;
+      }
+
+      function alreadyLiked() {
+        return exists(/databases/$(database)/documents/users/$(request.auth.uid)/likes/$(recipeId));
+      }
+
       allow read: if true;
-      allow write: if request.auth != null;
+
+      // 시드/등록은 서버 스크립트(Admin SDK)나 콘솔에서만 한다
+      allow create, delete: if false;
+
+      // 아직 누르지 않았으면 +1, 이미 눌렀으면 -1 — 정확히 1씩만 움직인다
+      allow update: if signedIn() && onlyLikesChanged() && (
+        (!alreadyLiked() && incoming().likes == resource.data.likes + 1) ||
+        (alreadyLiked() && incoming().likes == resource.data.likes - 1)
+      );
     }
   }
 }

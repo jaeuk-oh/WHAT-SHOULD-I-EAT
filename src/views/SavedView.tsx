@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { AnimatePresence } from 'motion/react';
-import { ArrowLeft, Bookmark, ChevronRight } from 'lucide-react';
-import type { IngredientCategory, IngredientVM, SavedRecipe, SavedRecipeInput } from '../types';
-import RecipeDetailModal from './RecipeDetailModal';
+import React from 'react';
+import { Bookmark, ChevronRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import AppHeader from '../components/AppHeader';
+import { recipePath } from '../lib/paths';
+import type { SavedRecipe, SavedRecipeInput } from '../types';
 
 const sourceLabel: Record<SavedRecipe['source'], string> = {
   ai: 'AI 추천',
@@ -10,41 +11,30 @@ const sourceLabel: Record<SavedRecipe['source'], string> = {
   celeb: '셀럽/쉐프',
 };
 
-export default function SavedView({ onBack, savedRecipes, ingredients, onToggleSave, onCook }: {
-  onBack: () => void;
+export default function SavedView({
+  savedRecipes,
+  onToggleSave,
+}: {
   savedRecipes: SavedRecipe[];
-  ingredients: IngredientVM[];
   onToggleSave: (recipe: SavedRecipeInput, e: React.MouseEvent) => void;
-  onCook: (items: { id: string; name: string; category: IngredientCategory }[]) => Promise<void>;
 }) {
-  const [detail, setDetail] = useState<SavedRecipe | null>(null);
-  const hasDetail = (r: SavedRecipe) => (r.steps && r.steps.length > 0) || (r.usedIngredients && r.usedIngredients.length > 0);
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-surface">
       <div className="w-full max-w-md mx-auto bg-surface min-h-screen relative">
-        <header className="flex justify-between items-center p-5 sticky top-0 bg-surface z-50">
-          <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-surface-variant">
-            <ArrowLeft size={24} />
-          </button>
-          <h1 className="text-xl font-bold">저장한 레시피</h1>
-          <div className="w-10"></div>
-        </header>
+        <AppHeader title="저장한 레시피" />
 
         <main className="flex-1 flex flex-col px-5 py-2 gap-4 pb-10">
           {savedRecipes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center flex-1 mt-20 text-on-surface-variant">
-              <Bookmark size={48} className="mb-4 text-outline" />
+            <div className="flex flex-col items-center justify-center flex-1 mt-20 text-on-surface-variant gap-2">
+              <Bookmark size={48} className="mb-2 text-outline" />
               <p>아직 저장한 레시피가 없어요.</p>
+              <Link to="/recipes" className="text-sm text-primary font-semibold">추천 받으러 가기</Link>
             </div>
           ) : (
             savedRecipes.map((recipe) => (
-              <article
-                key={recipe.id}
-                onClick={() => hasDetail(recipe) && setDetail(recipe)}
-                className={`bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex flex-col gap-3 ${hasDetail(recipe) ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
-              >
-                <div className="flex justify-between items-start">
-                  <div className="flex-1 pr-2">
+              <article key={recipe.id} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant flex flex-col gap-3">
+                <div className="flex justify-between items-start gap-2">
+                  <Link to={recipePath(recipe.title)} className="flex-1 min-w-0">
                     <h2 className="text-lg font-bold text-on-surface leading-tight mb-1">{recipe.title}</h2>
                     <p className="text-sm text-on-surface-variant">
                       {sourceLabel[recipe.source]}
@@ -59,43 +49,23 @@ export default function SavedView({ onBack, savedRecipes, ingredients, onToggleS
                         ))}
                       </div>
                     )}
-                  </div>
-                  <button onClick={(e) => onToggleSave(recipe, e)} className="p-1 -mt-1 -mr-1 text-primary transition-colors shrink-0" aria-label="저장 해제">
+                    <span className="mt-2 text-sm font-semibold text-primary flex items-center gap-1">
+                      만드는 법 보기 <ChevronRight size={16} />
+                    </span>
+                  </Link>
+                  <button
+                    onClick={(e) => onToggleSave(recipe, e)}
+                    aria-label="저장 해제"
+                    className="p-1 -mt-1 -mr-1 text-primary transition-colors shrink-0"
+                  >
                     <Bookmark size={24} className="fill-primary" />
                   </button>
                 </div>
-                {hasDetail(recipe) && (
-                  <div className="flex justify-end">
-                    <span className="text-sm font-semibold text-primary flex items-center gap-0.5">레시피 보기 <ChevronRight size={16} /></span>
-                  </div>
-                )}
               </article>
             ))
           )}
         </main>
       </div>
-
-      <AnimatePresence>
-        {detail && (
-          <RecipeDetailModal
-            detail={{
-              title: detail.title,
-              subtitle: `${sourceLabel[detail.source]}${detail.author && detail.source !== 'ai' ? ` · ${detail.author}` : ''}`,
-              time: detail.time,
-              difficulty: detail.difficulty,
-              servings: detail.servings,
-              tags: detail.tags,
-              usedIngredients: detail.usedIngredients,
-              steps: detail.steps,
-            }}
-            saved={true}
-            onToggleSave={(e) => { onToggleSave(detail, e); setDetail(null); }}
-            myIngredients={ingredients}
-            onCook={async (items) => { await onCook(items); setDetail(null); }}
-            onClose={() => setDetail(null)}
-          />
-        )}
-      </AnimatePresence>
     </div>
   );
 }

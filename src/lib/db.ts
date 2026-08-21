@@ -9,7 +9,6 @@ import {
   serverTimestamp,
   setDoc,
   Timestamp,
-  updateDoc,
   where,
   writeBatch,
 } from 'firebase/firestore';
@@ -17,10 +16,10 @@ import { db } from './firebase';
 import {
   expiryFromDays,
   type CommunityRecipe,
-  type ConsumptionAction,
+  type ConsumeAction,
+  type HistoryEntry,
   type Ingredient,
   type IngredientCategory,
-  type MonthlyStats,
   type NewIngredient,
   type RecipeSource,
   type SavedRecipe,
@@ -29,6 +28,7 @@ import {
 
 const ingredientsCol = (uid: string) => collection(db, 'users', uid, 'ingredients');
 const savedCol = (uid: string) => collection(db, 'users', uid, 'saved');
+const historyCol = (uid: string) => collection(db, 'users', uid, 'history');
 
 // 레시피 제목을 문서 ID로 사용해 저장/해제가 멱등이 되게 한다 ('/'는 문서 ID에 쓸 수 없음)
 const savedDocId = (title: string) => title.replace(/\//g, '-').slice(0, 100);
@@ -114,16 +114,36 @@ export function subscribeRecipes(
   );
 }
 
-export async function likeRecipe(id: string) {
-  await updateDoc(doc(recipesCol(), id), { likes: increment(1) });
+const likesCol = (uid: string) => collection(db, 'users', uid, 'likes');
+
+/** 내가 좋아요한 레시피 ID 집합 */
+export function subscribeLikes(
+  uid: string,
+  onChange: (ids: Set<string>) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    likesCol(uid),
+    (snap) => onChange(new Set(snap.docs.map((d) => d.id))),
+    onError,
+  );
 }
 
-// 문서 ID를 고정해 여러 번 실행해도 중복이 생기지 않는다 (개발용 시드)
-export async function seedRecipes(items: Omit<CommunityRecipe, 'id'>[], ids: string[]) {
+/**
+ * 좋아요 토글. 표시 문서와 카운터를 한 배치로 함께 바꿔서
+ * 같은 사용자가 두 번 올리는 것을 보안 규칙 단에서 막을 수 있게 한다.
+ */
+export async function toggleLike(uid: string, recipeId: string, currentlyLiked: boolean) {
   const batch = writeBatch(db);
-  items.forEach((item, idx) => {
-    batch.set(doc(recipesCol(), ids[idx]), { ...item, createdAt: serverTimestamp() });
-  });
+  const likeRef = doc(likesCol(uid), recipeId);
+  const recipeRef = doc(recipesCol(), recipeId);
+  if (currentlyLiked) {
+    batch.delete(likeRef);
+    batch.update(recipeRef, { likes: increment(-1) });
+  } else {
+    batch.set(likeRef, { createdAt: serverTimestamp() });
+    batch.update(recipeRef, { likes: increment(1) });
+  }
   await batch.commit();
 }
 
@@ -143,6 +163,7 @@ export function subscribeIngredients(
             id: d.id,
             name: data.name as string,
             category: data.category as IngredientCategory,
+            quantity: (data.quantity as string) ?? '',
             expiresAt: (data.expiresAt as Timestamp).toDate(),
           };
         }),
@@ -158,6 +179,7 @@ export async function addIngredients(uid: string, items: NewIngredient[]) {
     batch.set(doc(ingredientsCol(uid)), {
       name: item.name,
       category: item.category,
+      quantity: item.quantity,
       expiresAt: Timestamp.fromDate(expiryFromDays(item.shelfLifeDays)),
       createdAt: serverTimestamp(),
     });
@@ -165,8 +187,65 @@ export async function addIngredients(uid: string, items: NewIngredient[]) {
   await batch.commit();
 }
 
-export async function deleteIngredient(uid: string, id: string) {
-  await deleteDoc(doc(ingredientsCol(uid), id));
+/**
+ * 재료를 목록에서 없애면서 그 이유를 남긴다.
+ * '먹었다'와 '버렸다'를 구분해야 소진율(제품의 본질적 가치 지표)을 잴 수 있다.
+ */
+export async function consumeIngredient(uid: string, ingredient: Ingredient, action: ConsumeAction) {
+  const batch = writeBatch(db);
+  batch.delete(doc(ingredientsCol(uid), ingredient.id));
+  batch.set(doc(historyCol(uid)), {
+    name: ingredient.name,
+    category: ingredient.category,
+    action,
+    at: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+/** 여러 재료를 한 번에 소진 처리한다. 요리를 마쳤을 때 쓴다. */
+export async function consumeIngredients(uid: string, items: Ingredient[], action: ConsumeAction) {
+  if (items.length === 0) return;
+  const batch = writeBatch(db);
+  for (const item of items) {
+    batch.delete(doc(ingredientsCol(uid), item.id));
+    batch.set(doc(historyCol(uid)), {
+      name: item.name,
+      category: item.category,
+      action,
+      at: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
+
+/** 지정 시점 이후의 소진 기록. 절약 리포트에 쓴다. */
+export function subscribeHistory(
+  uid: string,
+  since: Date,
+  onChange: (entries: HistoryEntry[]) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(historyCol(uid), where('at', '>=', Timestamp.fromDate(since)), orderBy('at', 'desc'));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onChange(
+        snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            name: (data.name as string) ?? '',
+            category: (data.category as IngredientCategory) ?? '기타',
+            action: (data.action as ConsumeAction) ?? 'eaten',
+            // serverTimestamp는 서버 확정 전까지 null이라 로컬 시각으로 메운다
+            at: (data.at as Timestamp | null)?.toDate() ?? new Date(),
+          };
+        }),
+      );
+    },
+    onError,
+  );
 }
 
 // 임박 재료 알림 수신 여부는 users/{uid} 문서의 notifyExpiry 필드로 관리한다
@@ -190,64 +269,3 @@ export async function setNotifyExpiry(uid: string, enabled: boolean) {
   );
 }
 
-const logCol = (uid: string) => collection(db, 'users', uid, 'log');
-
-// 재료 소비 신호 한 건 기록 (요리/폐기). 삭제 플로우에서 사용한다.
-export async function logConsumption(
-  uid: string,
-  entry: { name: string; category: IngredientCategory; action: ConsumptionAction },
-) {
-  await setDoc(doc(logCol(uid)), {
-    name: entry.name,
-    category: entry.category,
-    action: entry.action,
-    at: serverTimestamp(),
-  });
-}
-
-// "이거 만들었어요": 여러 재료를 한 번에 재고에서 빼고 요리 로그로 남긴다
-export async function consumeIngredients(
-  uid: string,
-  items: { id: string; name: string; category: IngredientCategory }[],
-) {
-  if (items.length === 0) return;
-  const batch = writeBatch(db);
-  for (const item of items) {
-    batch.delete(doc(ingredientsCol(uid), item.id));
-    batch.set(doc(logCol(uid)), {
-      name: item.name,
-      category: item.category,
-      action: 'cooked',
-      at: serverTimestamp(),
-    });
-  }
-  await batch.commit();
-}
-
-function startOfMonth(): Date {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
-}
-
-// 이번 달 소비 로그를 집계해 살린/버린 재료 수를 실시간으로 돌려준다
-export function subscribeMonthlyStats(
-  uid: string,
-  onChange: (stats: MonthlyStats) => void,
-  onError?: (e: Error) => void,
-) {
-  const q = query(logCol(uid), where('at', '>=', Timestamp.fromDate(startOfMonth())));
-  return onSnapshot(
-    q,
-    (snap) => {
-      let cooked = 0;
-      let discarded = 0;
-      snap.docs.forEach((d) => {
-        const action = d.data().action as ConsumptionAction;
-        if (action === 'cooked') cooked += 1;
-        else if (action === 'discarded') discarded += 1;
-      });
-      onChange({ cooked, discarded });
-    },
-    onError,
-  );
-}
