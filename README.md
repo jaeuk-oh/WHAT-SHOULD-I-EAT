@@ -19,7 +19,7 @@
 - **레시피 영상** — YouTube Data API로 실제 요리 영상을 찾아 공식 임베드로 재생. AI가 *무엇을* 만들지 정하고, 영상이 *어떻게* 만드는지 보여준다
 - **커뮤니티/셀럽 레시피** — Firestore `recipes` 컬렉션, 중복 불가 좋아요
 - **요리 완료 → 재료 자동 소진** — 조리법 화면에서 "다 만들었어요"를 누르면 쓴 재료를 냉장고에서 정리
-- **임박 재료 알림** — 알림을 켠 유저에게 D-1 이하 재료를 매일 이메일로 안내 (Vercel Cron)
+- **임박 재료 알림** — 알림을 켠 유저의 D-1 이하 재료를 매일 알림함(벨 아이콘)에 쌓음 (Vercel Cron)
 - **저장한 레시피** — `users/{uid}/saved`에 스냅샷 저장 (AI 레시피는 조리법까지 저장)
 - **PWA** — 홈 화면 설치, 재방문 시 즉시 로딩
 
@@ -34,14 +34,15 @@
       ├─ POST /api/recipe-detail      레시피 이름 → 단계별 조리법    (하루 60회)
       ├─ POST /api/youtube-recipes    레시피 이름 → 유튜브 영상      (하루 40회, 7일 캐시)
       ├─ POST /api/account-delete     회원 탈퇴 (데이터 + 계정 삭제) (하루 5회)
-      └─ GET  /api/cron/expiry-digest 매일 실행, 임박 재료 이메일 알림 (Vercel Cron)
+      └─ GET  /api/cron/expiry-notify 매일 실행, 임박 재료를 알림함에 적재 (Vercel Cron)
 ```
 
 모든 요청형 API는 `api/_utils.ts`의 `guard()`를 통과한다: **POST 검사 → Firebase ID 토큰 검증(`jose`) → 사용량 차감**.
 사용량 카운터는 Firestore `usage/{uid}`에 Admin SDK 트랜잭션으로 기록하며, 클라이언트는 읽기만 가능하다.
 OpenAI 키는 서버에만 존재한다.
 
-크론 함수는 사용자 요청 없이 `firebase-admin`(서비스 계정)으로 Firestore를 직접 읽고 Resend로 메일을 보내며,
+크론 함수는 사용자 요청 없이 `firebase-admin`(서비스 계정)으로 Firestore를 직접 읽고
+`users/{uid}/notifications`에 알림 문서를 쓰며(클라이언트는 벨 아이콘으로 구독),
 `CRON_SECRET` 헤더로 외부에서의 임의 호출을 차단한다.
 
 ### 왜 이런 구조인가
@@ -93,11 +94,9 @@ npx vercel --prod
 
 선택 환경변수: `YOUTUBE_API_KEY` (없으면 영상 섹션만 숨겨지고 나머지는 정상 동작)
 
-임박 재료 이메일 알림(크론)용 추가 환경변수:
+임박 재료 알림(크론)용 추가 환경변수:
 
-- `RESEND_API_KEY` — [Resend](https://resend.com) API 키 (메일 발송)
-- `DIGEST_FROM_EMAIL` — 발신 주소 (예: `냉털메이트 <no-reply@yourdomain.com>`, 미설정 시 Resend 테스트 발신자)
-- `CRON_SECRET` — 크론 엔드포인트 보호용 시크릿 (Vercel Cron이 `Authorization: Bearer` 헤더로 전달)
+- `CRON_SECRET` — 크론 엔드포인트 보호용 시크릿 (Vercel Cron이 `Authorization: Bearer` 헤더로 전달). 없으면 엔드포인트가 503으로 막힌다
 
 필수 환경변수: `OPENAI_API_KEY`, `OPENAI_MODEL`, `FIREBASE_SERVICE_ACCOUNT`,
 `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`,
@@ -113,4 +112,4 @@ npx vercel --prod
 1. Firebase 콘솔 → Authentication → Settings → **승인된 도메인**에 배포 도메인 추가
 2. Firebase 콘솔 → Firestore(해당 데이터베이스) → 규칙에 `firestore.rules` 내용 반영
 3. 프로덕션 URL에서 로그인 → 재료 추가 → 영수증 스캔 → 추천 → **레시피 보기 → 이거 만들었어요** → 북마크 전체 플로우 확인
-4. (알림 사용 시) 메뉴에서 **임박 재료 알림** 켜기 → `curl -H "Authorization: Bearer $CRON_SECRET" https://<도메인>/api/cron/expiry-digest`로 수동 테스트 → 메일 수신 확인
+4. (알림 사용 시) 메뉴에서 **임박 재료 알림** 켜기 → `curl -H "Authorization: Bearer $CRON_SECRET" https://<도메인>/api/cron/expiry-notify`로 수동 테스트 → 앱 벨 아이콘에 알림 적재 확인

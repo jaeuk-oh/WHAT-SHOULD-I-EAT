@@ -29,7 +29,7 @@ service cloud.firestore {
       return incoming().keys().hasOnly(['email', 'displayName', 'photoURL', 'createdAt', 'updatedAt', 'notifyExpiry'])
         && (!('displayName' in incoming()) || incoming().displayName == null || incoming().displayName is string)
         && (!('email' in incoming()) || incoming().email == null || incoming().email is string)
-        // 임박 재료 이메일 알림 수신 여부. 크론(api/cron/expiry-digest.ts)이 이 필드로 대상자를 찾는다
+        // 임박 재료 알림(인앱) 수신 여부. 크론(api/cron/expiry-notify.ts)이 이 필드로 대상자를 찾는다
         && (!('notifyExpiry' in incoming()) || incoming().notifyExpiry is bool);
     }
 
@@ -90,6 +90,17 @@ service cloud.firestore {
       match /likes/{recipeId} {
         allow read, create, delete: if isOwner(userId);
         allow update: if false;
+      }
+
+      // ---------- 알림함 (벨 아이콘) ----------
+      // 서버(크론, Admin SDK)만 만든다. 클라이언트는 읽음 처리와 삭제만 한다.
+
+      match /notifications/{notificationId} {
+        allow read, delete: if isOwner(userId);
+        allow create: if false;
+        allow update: if isOwner(userId)
+          && incoming().diff(resource.data).affectedKeys().hasOnly(['read'])
+          && incoming().read is bool;
       }
     }
 

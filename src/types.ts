@@ -48,6 +48,15 @@ export function startOfMonth(date = new Date()): Date {
 
 export type IngredientVM = Ingredient & { daysLeft: number };
 
+/** 인앱 알림함(벨 아이콘)에 쌓이는 항목. 서버(크론 등)만 만든다. */
+export interface AppNotification {
+  id: string;
+  title: string;
+  body: string;
+  read: boolean;
+  createdAt: Date;
+}
+
 export interface RecipeIngredient {
   name: string;
   amount: string;

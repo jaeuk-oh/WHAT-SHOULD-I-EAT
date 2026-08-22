@@ -11,7 +11,7 @@ import AppHeader from '../components/AppHeader';
 const OPERATOR = {
   service: '냉털메이트',
   name: '[운영자명]',
-  email: '[문의 이메일]',
+  email: 'tony66@whatonsolve.com',
   address: '[사업장 주소]',
   effectiveDate: '[시행일]',
 };
