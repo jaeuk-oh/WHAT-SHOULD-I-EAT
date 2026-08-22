@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "//engines": "firebase-admin 14가 node>=22를 요구한다. 배포 환경 Node를 고정하지 않으면 firebase-admin/auth 로드가 실패해 guard를 쓰는 모든 /api 엔드포인트가 500이 난다. CI(.github/workflows/ci.yml)와 같은 버전으로 맞춘다.",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "dev:api": "tsx watch scripts/dev-api.ts",
