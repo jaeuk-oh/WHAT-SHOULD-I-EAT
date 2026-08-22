@@ -2,12 +2,52 @@ import OpenAI from 'openai';
 
 export const INGREDIENT_CATEGORIES = ['유제품', '콩류', '채소류', '육류', '과일', '기타'] as const;
 
-export function getOpenAI() {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// NVIDIA NIM은 OpenAI 호환 chat completions 엔드포인트를 제공한다.
+// https://integrate.api.nvidia.com/v1/chat/completions
+const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1';
+
+export function getNvidia() {
+  return new OpenAI({ apiKey: process.env.NVIDIA_API_KEY, baseURL: NVIDIA_BASE_URL });
 }
 
-export function getModel() {
-  return process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+/** 텍스트 추천/조리법 생성용. 빠른 응답을 위해 MoE 경량 모델을 기본으로 쓴다. */
+export function getTextModel() {
+  return process.env.NVIDIA_TEXT_MODEL || 'nvidia/nemotron-3.5-lightning-30b-a3b';
+}
+
+/** 영수증 이미지 인식용 비전-언어 모델. */
+export function getVisionModel() {
+  return process.env.NVIDIA_VISION_MODEL || 'nvidia/nemotron-nano-12b-v2-vl';
+}
+
+/**
+ * NVIDIA NIM 채팅 API는 OpenAI의 response_format(json_schema strict)을 지원하지 않는다.
+ * 프롬프트로 "JSON만 답하라"를 강제하고, 응답에서 첫 '{'~마지막 '}' 구간만 골라 파싱한다
+ * (모델이 코드펜스나 설명을 덧붙이는 경우를 방어한다). 스키마가 보장되지 않으므로
+ * 각 호출부에서 필수 필드에 기본값을 채워 방어적으로 쓴다.
+ */
+function extractJson(content: string | null | undefined): Record<string, unknown> {
+  if (!content) throw new Error('빈 응답');
+  const start = content.indexOf('{');
+  const end = content.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) throw new Error('JSON 응답을 찾지 못함');
+  return JSON.parse(content.slice(start, end + 1)) as Record<string, unknown>;
+}
+
+type ChatParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
+
+/**
+ * 텍스트 모델(getTextModel) 호출 공통 래퍼.
+ * 이 모델은 기본적으로 "생각(thinking)" 트레이스를 content에 그대로 흘려보낸다 —
+ * 끄지 않으면 JSON 답 전에 긴 사고 과정이 나와 max_tokens를 다 써버리고 JSON을 못 낸다.
+ * chat_template_kwargs는 OpenAI 타입에 없는 NVIDIA 전용 확장이라 타입을 넓혀서 전달한다.
+ */
+async function createTextCompletion(params: Omit<ChatParams, 'model'>) {
+  return getNvidia().chat.completions.create({
+    ...params,
+    model: getTextModel(),
+    chat_template_kwargs: { enable_thinking: false },
+  } as ChatParams & { chat_template_kwargs: { enable_thinking: boolean } });
 }
 
 export interface ScannedItem {
@@ -40,6 +80,19 @@ export interface RecommendedRecipe {
   missingIngredients: string[];
 }
 
+const RECOMMEND_JSON_SHAPE = `{
+  "recipes": [
+    {
+      "title": string, "time": string, "difficulty": "아주 쉬움"|"쉬움"|"보통"|"어려움", "servings": string,
+      "warning": string, "warningType": "alert"|"info", "tags": string[],
+      "usedIngredients": [{"name": string, "amount": string}],
+      "steps": string[],
+      "substitutes": [{"missing": string, "replaceWith": string}],
+      "missingIngredients": string[]
+    }
+  ]
+}`;
+
 export async function recommendRecipes(input: RecommendInput): Promise<RecommendedRecipe[]> {
   const ingredientLines = input.ingredients
     .map((i) => `- ${i.name} (${i.category}, D-${i.daysLeft})`)
@@ -56,8 +109,7 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
   }
   request += '레시피 3~4개를 추천해줘.';
 
-  const response = await getOpenAI().chat.completions.create({
-    model: getModel(),
+  const response = await createTextCompletion({
     messages: [
       {
         role: 'system',
@@ -72,81 +124,35 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
           'missingIngredients에는 이 요리에 꼭 필요하지만 사용자에게 없는 재료명만 넣는다. ' +
           '소금·후추·식용유·간장 같은 기본 조미료는 누구나 있다고 보고 missingIngredients에 넣지 않는다. ' +
           'steps에는 실제로 따라 할 수 있는 조리 과정을 3~8단계로, 각 단계를 한 문장으로 넣는다 (번호는 붙이지 않는다). ' +
-          "servings는 '1인분' 형태. time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나. 모든 텍스트는 한국어.",
+          "servings는 '1인분' 형태. time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나. 모든 텍스트는 한국어.\n\n" +
+          `다른 설명 없이 아래 형식의 JSON 객체만 답한다(코드펜스 금지):\n${RECOMMEND_JSON_SHAPE}`,
       },
       { role: 'user', content: request },
     ],
-    response_format: {
-      type: 'json_schema',
-      json_schema: {
-        name: 'recipe_recommendations',
-        strict: true,
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            recipes: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  title: { type: 'string' },
-                  time: { type: 'string' },
-                  difficulty: { type: 'string', enum: ['아주 쉬움', '쉬움', '보통', '어려움'] },
-                  servings: { type: 'string' },
-                  warning: { type: 'string' },
-                  warningType: { type: 'string', enum: ['alert', 'info'] },
-                  tags: { type: 'array', items: { type: 'string' } },
-                  usedIngredients: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      additionalProperties: false,
-                      properties: {
-                        name: { type: 'string' },
-                        amount: { type: 'string' },
-                      },
-                      required: ['name', 'amount'],
-                    },
-                  },
-                  steps: { type: 'array', items: { type: 'string' } },
-                  substitutes: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      additionalProperties: false,
-                      properties: {
-                        missing: { type: 'string' },
-                        replaceWith: { type: 'string' },
-                      },
-                      required: ['missing', 'replaceWith'],
-                    },
-                  },
-                  missingIngredients: { type: 'array', items: { type: 'string' } },
-                },
-                required: [
-                  'title', 'time', 'difficulty', 'servings', 'warning', 'warningType', 'tags',
-                  'usedIngredients', 'steps', 'substitutes', 'missingIngredients',
-                ],
-              },
-            },
-          },
-          required: ['recipes'],
-        },
-      },
-    },
   });
 
-  const content = response.choices[0]?.message?.content;
-  if (!content) throw new Error('빈 응답');
-  const parsed = JSON.parse(content) as { recipes: RecommendedRecipe[] };
-  return parsed.recipes;
+  const parsed = extractJson(response.choices[0]?.message?.content);
+  const recipes = Array.isArray(parsed.recipes) ? (parsed.recipes as Partial<RecommendedRecipe>[]) : [];
+  return recipes.map((r) => ({
+    title: r.title ?? '',
+    time: r.time ?? '',
+    difficulty: r.difficulty ?? '보통',
+    servings: r.servings ?? '1인분',
+    warning: r.warning ?? '',
+    warningType: r.warningType === 'alert' ? 'alert' : 'info',
+    tags: Array.isArray(r.tags) ? r.tags : [],
+    usedIngredients: Array.isArray(r.usedIngredients) ? r.usedIngredients : [],
+    steps: Array.isArray(r.steps) ? r.steps : [],
+    substitutes: Array.isArray(r.substitutes) ? r.substitutes : [],
+    missingIngredients: Array.isArray(r.missingIngredients) ? r.missingIngredients : [],
+  }));
 }
 
+const RECEIPT_JSON_SHAPE = `{ "items": [ { "name": string, "category": "${INGREDIENT_CATEGORIES.join('"|"')}", "quantity": string, "shelfLifeDays": integer } ] }`;
+
 export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
-  const response = await getOpenAI().chat.completions.create({
-    model: getModel(),
+  const response = await getNvidia().chat.completions.create({
+    model: getVisionModel(),
     messages: [
       {
         role: 'system',
@@ -156,7 +162,8 @@ export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
           '각 항목의 상품명은 브랜드/용량을 뺀 간결한 재료명으로 정리한다 (예: "서울우유 1L" → "우유"). ' +
           '카테고리는 주어진 목록에서만 고른다 (예: 두부·콩나물은 콩류, 애호박·오이 등 채소는 채소류, 우유·치즈는 유제품, 계란·면·소스는 기타). ' +
           'quantity에는 영수증의 수량이나 용량을 짧게 적는다 (예: "1팩", "2개", "500g", "1L"). 알 수 없으면 "1개". ' +
-          'shelfLifeDays는 일반적인 냉장 보관 기준 예상 보관일수를 정수로 추정한다.',
+          'shelfLifeDays는 일반적인 냉장 보관 기준 예상 보관일수를 정수로 추정한다.\n\n' +
+          `다른 설명 없이 아래 형식의 JSON 객체만 답한다(코드펜스 금지):\n${RECEIPT_JSON_SHAPE}`,
       },
       {
         role: 'user',
@@ -166,46 +173,17 @@ export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
         ],
       },
     ],
-    response_format: {
-      type: 'json_schema',
-      json_schema: {
-        name: 'receipt_items',
-        strict: true,
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            items: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  name: { type: 'string' },
-                  category: { type: 'string', enum: [...INGREDIENT_CATEGORIES] },
-                  quantity: { type: 'string' },
-                  shelfLifeDays: { type: 'integer' },
-                },
-                required: ['name', 'category', 'quantity', 'shelfLifeDays'],
-              },
-            },
-          },
-          required: ['items'],
-        },
-      },
-    },
   });
 
-  const content = response.choices[0]?.message?.content;
-  if (!content) throw new Error('빈 응답');
-  const parsed = JSON.parse(content) as { items: ScannedItem[] };
-  return parsed.items
-    .filter((i) => i.name.trim().length > 0)
+  const parsed = extractJson(response.choices[0]?.message?.content);
+  const items = Array.isArray(parsed.items) ? (parsed.items as Partial<ScannedItem>[]) : [];
+  return items
+    .filter((i): i is Partial<ScannedItem> & { name: string } => typeof i.name === 'string' && i.name.trim().length > 0)
     .map((i) => ({
       name: i.name.trim(),
-      category: (INGREDIENT_CATEGORIES as readonly string[]).includes(i.category) ? i.category : '기타',
+      category: (INGREDIENT_CATEGORIES as readonly string[]).includes(i.category ?? '') ? (i.category as string) : '기타',
       quantity: (i.quantity ?? '').trim().slice(0, 20) || '1개',
-      shelfLifeDays: Math.min(365, Math.max(1, Math.round(i.shelfLifeDays))),
+      shelfLifeDays: Math.min(365, Math.max(1, Math.round(Number(i.shelfLifeDays) || 3))),
     }));
 }
 
@@ -230,11 +208,17 @@ export interface RecipeDetail {
   tips: string[];
 }
 
+const RECIPE_DETAIL_JSON_SHAPE = `{
+  "title": string, "summary": string, "time": string, "difficulty": "아주 쉬움"|"쉬움"|"보통"|"어려움", "servings": string,
+  "ingredients": [{"name": string, "amount": string, "owned": boolean}],
+  "steps": [{"text": string, "tip": string}],
+  "tips": string[]
+}`;
+
 export async function getRecipeDetail(input: RecipeDetailInput): Promise<RecipeDetail> {
   const owned = input.ingredients.map((i) => i.name).join(', ') || '(등록된 재료 없음)';
 
-  const response = await getOpenAI().chat.completions.create({
-    model: getModel(),
+  const response = await createTextCompletion({
     messages: [
       {
         role: 'system',
@@ -245,61 +229,25 @@ export async function getRecipeDetail(input: RecipeDetailInput): Promise<RecipeD
           'steps는 3~8단계로, 각 단계는 한 문장으로 명확하게 쓴다. ' +
           '불 세기·시간처럼 실패하기 쉬운 부분은 tip에 짧게 덧붙이고, 특별히 덧붙일 말이 없으면 tip은 빈 문자열로 둔다. ' +
           "time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나, servings는 '1인분' 형태. " +
-          'tips에는 보관법이나 응용법 같은 조언을 0~3개 넣는다. 모든 텍스트는 한국어.',
+          'tips에는 보관법이나 응용법 같은 조언을 0~3개 넣는다. 모든 텍스트는 한국어.\n\n' +
+          `다른 설명 없이 아래 형식의 JSON 객체만 답한다(코드펜스 금지):\n${RECIPE_DETAIL_JSON_SHAPE}`,
       },
       {
         role: 'user',
         content: `요리 이름: ${input.title}\n내가 가진 재료: ${owned}\n\n이 요리의 조리법을 알려줘.`,
       },
     ],
-    response_format: {
-      type: 'json_schema',
-      json_schema: {
-        name: 'recipe_detail',
-        strict: true,
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            title: { type: 'string' },
-            summary: { type: 'string' },
-            time: { type: 'string' },
-            difficulty: { type: 'string', enum: ['아주 쉬움', '쉬움', '보통', '어려움'] },
-            servings: { type: 'string' },
-            ingredients: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  name: { type: 'string' },
-                  amount: { type: 'string' },
-                  owned: { type: 'boolean' },
-                },
-                required: ['name', 'amount', 'owned'],
-              },
-            },
-            steps: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  text: { type: 'string' },
-                  tip: { type: 'string' },
-                },
-                required: ['text', 'tip'],
-              },
-            },
-            tips: { type: 'array', items: { type: 'string' } },
-          },
-          required: ['title', 'summary', 'time', 'difficulty', 'servings', 'ingredients', 'steps', 'tips'],
-        },
-      },
-    },
   });
 
-  const content = response.choices[0]?.message?.content;
-  if (!content) throw new Error('빈 응답');
-  return JSON.parse(content) as RecipeDetail;
+  const parsed = extractJson(response.choices[0]?.message?.content) as Partial<RecipeDetail>;
+  return {
+    title: parsed.title ?? input.title,
+    summary: parsed.summary ?? '',
+    time: parsed.time ?? '',
+    difficulty: parsed.difficulty ?? '보통',
+    servings: parsed.servings ?? '1인분',
+    ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : [],
+    steps: Array.isArray(parsed.steps) ? parsed.steps : [],
+    tips: Array.isArray(parsed.tips) ? parsed.tips : [],
+  };
 }

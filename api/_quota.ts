@@ -5,7 +5,7 @@ import { getAdminDb } from './_admin.js';
  *
  * 2단계로 막는다.
  *  - 단기 레이트리밋(슬라이딩 윈도우): 연타/자동화 스크립트 차단
- *  - 일일 쿼터: OpenAI 비용 상한선
+ *  - 일일 쿼터: NVIDIA NIM 비용 상한선
  *
  * 카운터는 Firestore `usage/{uid}` 문서에 Admin SDK 트랜잭션으로 기록한다.
  * 클라이언트는 이 문서를 읽을 수만 있고 쓸 수 없다(firestore.rules 참고).
