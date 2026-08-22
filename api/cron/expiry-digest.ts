@@ -65,9 +65,15 @@ function buildHtml(displayName: string | undefined, items: { name: string; daysL
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Vercel Cron은 Authorization: Bearer <CRON_SECRET> 헤더로 호출한다
+  // Vercel Cron은 Authorization: Bearer <CRON_SECRET> 헤더로 호출한다.
+  // 시크릿이 없으면 열어두지 않고 막는다 — 이 엔드포인트는 전체 사용자를 순회하며
+  // 메일을 발송하므로, 무인증으로 열리면 대량 발송·비용 폭탄의 통로가 된다.
   const secret = process.env.CRON_SECRET;
-  if (secret && req.headers.authorization !== `Bearer ${secret}`) {
+  if (!secret) {
+    console.error('CRON_SECRET 미설정 — 크론 엔드포인트를 차단했다.');
+    return res.status(503).json({ error: '알림 기능이 설정되지 않았습니다.' });
+  }
+  if (req.headers.authorization !== `Bearer ${secret}`) {
     return res.status(401).json({ error: '허용되지 않은 호출입니다.' });
   }
 
