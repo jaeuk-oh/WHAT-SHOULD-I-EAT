@@ -5,6 +5,7 @@ import {
   Settings, ShoppingBag, Trash2, Utensils, UtensilsCrossed,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+import NotificationBell from '../components/NotificationBell';
 import {
   INGREDIENT_CATEGORIES,
   summarize,
@@ -237,12 +238,14 @@ export default function HomeView({
   ingredients,
   history,
   photoURL,
+  unreadNotifications,
   onAdd,
   onConsume,
 }: {
   ingredients: IngredientVM[];
   history: HistoryEntry[];
   photoURL: string | null;
+  unreadNotifications: number;
   onAdd: (item: NewIngredient) => Promise<void>;
   onConsume: (item: IngredientVM, action: ConsumeAction) => void;
 }) {
@@ -274,13 +277,16 @@ export default function HomeView({
   const header = (
     <header className="flex justify-between items-center p-5 sticky top-0 bg-surface z-50 shadow-sm max-w-2xl mx-auto w-full">
       <div className="text-2xl font-bold text-primary">냉털메이트</div>
-      <Link to="/settings" aria-label="설정" className="text-on-surface-variant hover:text-primary transition-colors flex items-center">
-        {photoURL ? (
-          <img src={photoURL} alt="" referrerPolicy="no-referrer" className="w-8 h-8 rounded-full border border-outline-variant" />
-        ) : (
-          <Settings size={26} />
-        )}
-      </Link>
+      <div className="flex items-center gap-4">
+        <NotificationBell unreadCount={unreadNotifications} />
+        <Link to="/settings" aria-label="설정" className="text-on-surface-variant hover:text-primary transition-colors flex items-center">
+          {photoURL ? (
+            <img src={photoURL} alt="" referrerPolicy="no-referrer" className="w-8 h-8 rounded-full border border-outline-variant" />
+          ) : (
+            <Settings size={26} />
+          )}
+        </Link>
+      </div>
     </header>
   );
 

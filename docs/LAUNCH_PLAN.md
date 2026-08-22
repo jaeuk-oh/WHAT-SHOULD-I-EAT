@@ -14,7 +14,7 @@
 ### 잘 되어 있는 것
 
 - 핵심 플로우(로그인 → 영수증 스캔 → 재료 관리 → 추천)가 실제로 동작한다.
-- OpenAI 키가 서버(Vercel Functions)에만 존재하고, 모든 API가 Firebase ID 토큰을 검증한다.
+- AI API 키가 서버(Vercel Functions)에만 존재하고, 모든 API가 Firebase ID 토큰을 검증한다.
 - Firestore 실시간 구독으로 다기기 동기화가 이미 된다.
 - 이미지가 클라이언트에서 1280px JPEG로 압축되어 전송된다.
 - 트러블슈팅 기록(`docs/TROUBLESHOOTING.md`)이 운영 관점에서 관리되고 있다.
@@ -43,18 +43,18 @@
 ```
 [현재]
 브라우저 SPA ─┬─ Firebase Auth / Firestore (직접, 규칙만으로 보호)
-              └─ /api/{receipt-scan,recommend}  ── 토큰 검증 → OpenAI
+              └─ /api/{receipt-scan,recommend}  ── 토큰 검증 → NVIDIA NIM
 
 [목표]
 브라우저 SPA ─┬─ Firebase Auth / Firestore (직접, 규칙 강화)
-              └─ /api/*  ── 토큰 검증 → [쿼터·레이트리밋 게이트] → OpenAI
+              └─ /api/*  ── 토큰 검증 → [쿼터·레이트리밋 게이트] → NVIDIA NIM
                               │
                               └─ Firestore(Admin SDK): 사용량 카운터 / 계정 삭제
 ```
 
 핵심 원칙: **읽기·쓰기 중 "돈이 나가거나 신뢰가 필요한 것"만 서버로 보낸다.**
 재료·저장 레시피 같은 사용자 소유 데이터는 지금처럼 클라이언트 직결 + 보안 규칙으로 두는 것이
-비용·지연 모두 유리하다. 서버는 (a) OpenAI 프록시, (b) 사용량 집계, (c) 계정 삭제만 담당한다.
+비용·지연 모두 유리하다. 서버는 (a) NVIDIA NIM 프록시, (b) 사용량 집계, (c) 계정 삭제만 담당한다.
 
 ### 2.2 남용 방어 설계 (B1)
 
@@ -151,11 +151,11 @@
 
 - [ ] `npm run lint` (타입체크) 통과
 - [ ] `npm run build` 통과
-- [ ] Vercel 환경변수 등록: `OPENAI_API_KEY`, `OPENAI_MODEL`, `FIREBASE_SERVICE_ACCOUNT`, `VITE_FIREBASE_*`
+- [ ] Vercel 환경변수 등록: `NVIDIA_API_KEY`, `FIREBASE_SERVICE_ACCOUNT`, `VITE_FIREBASE_*`
 - [ ] Firebase 콘솔 → Authentication → 승인된 도메인에 배포 도메인 추가
 - [ ] Firebase 콘솔 → Firestore 규칙에 `firestore.rules` 반영
 - [ ] 약관/개인정보처리방침의 **운영자 정보 플레이스홀더 채우기** 및 법률 검토
-- [ ] OpenAI 대시보드에 **월 사용량 상한(hard limit)** 설정 — 코드 쿼터의 최후 방어선
+- [ ] NVIDIA 계정 대시보드에서 **크레딧·사용량 한도** 확인 — 코드 쿼터의 최후 방어선
 
 배포 후 스모크 테스트:
 

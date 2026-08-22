@@ -70,6 +70,6 @@
     }
   ],
   "crons": [
-    { "path": "/api/cron/expiry-digest", "schedule": "0 0 * * *" }
+    { "path": "/api/cron/expiry-notify", "schedule": "0 0 * * *" }
   ]
 }

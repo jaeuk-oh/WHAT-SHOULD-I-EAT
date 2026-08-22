@@ -3,6 +3,7 @@ import {
   deleteDoc,
   doc,
   increment,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -15,6 +16,7 @@ import {
 import { db } from './firebase';
 import {
   expiryFromDays,
+  type AppNotification,
   type CommunityRecipe,
   type ConsumeAction,
   type HistoryEntry,
@@ -29,6 +31,7 @@ import {
 const ingredientsCol = (uid: string) => collection(db, 'users', uid, 'ingredients');
 const savedCol = (uid: string) => collection(db, 'users', uid, 'saved');
 const historyCol = (uid: string) => collection(db, 'users', uid, 'history');
+const notificationsCol = (uid: string) => collection(db, 'users', uid, 'notifications');
 
 // 레시피 제목을 문서 ID로 사용해 저장/해제가 멱등이 되게 한다 ('/'는 문서 ID에 쓸 수 없음)
 const savedDocId = (title: string) => title.replace(/\//g, '-').slice(0, 100);
@@ -267,5 +270,52 @@ export async function setNotifyExpiry(uid: string, enabled: boolean) {
     { notifyExpiry: enabled, updatedAt: serverTimestamp() },
     { merge: true },
   );
+}
+
+/**
+ * 알림함(벨 아이콘). 서버(크론 등)가 만들고 클라이언트는 읽음 처리만 한다.
+ * 최근 50개만 구독한다 — 뱃지 카운트와 목록 모두 이걸로 충분하다.
+ */
+export function subscribeNotifications(
+  uid: string,
+  onChange: (items: AppNotification[]) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(notificationsCol(uid), orderBy('createdAt', 'desc'), limit(50));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onChange(
+        snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            title: (data.title as string) ?? '',
+            body: (data.body as string) ?? '',
+            read: data.read === true,
+            // serverTimestamp는 서버 확정 전까지 null이라 로컬 시각으로 메운다
+            createdAt: (data.createdAt as Timestamp | null)?.toDate() ?? new Date(),
+          };
+        }),
+      );
+    },
+    onError,
+  );
+}
+
+export async function markNotificationRead(uid: string, id: string) {
+  await setDoc(doc(notificationsCol(uid), id), { read: true }, { merge: true });
+}
+
+/** ids는 호출부에서 미리 안 읽은 것만 걸러서 넘긴다. */
+export async function markAllNotificationsRead(uid: string, ids: string[]) {
+  if (ids.length === 0) return;
+  const batch = writeBatch(db);
+  for (const id of ids) batch.set(doc(notificationsCol(uid), id), { read: true }, { merge: true });
+  await batch.commit();
+}
+
+export async function deleteNotification(uid: string, id: string) {
+  await deleteDoc(doc(notificationsCol(uid), id));
 }
 

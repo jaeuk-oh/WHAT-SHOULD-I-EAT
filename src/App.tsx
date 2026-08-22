@@ -7,11 +7,14 @@ import {
   addIngredients,
   consumeIngredient,
   consumeIngredients,
+  markAllNotificationsRead,
+  markNotificationRead,
   saveRecipe,
   setNotifyExpiry,
   subscribeHistory,
   subscribeIngredients,
   subscribeLikes,
+  subscribeNotifications,
   subscribeNotifyExpiry,
   subscribeSavedRecipes,
   toggleLike as toggleLikeDoc,
@@ -20,6 +23,7 @@ import {
 import {
   daysLeft as calcDaysLeft,
   startOfMonth,
+  type AppNotification,
   type ConsumeAction,
   type HistoryEntry,
   type Ingredient,
@@ -30,6 +34,7 @@ import {
 } from './types';
 import HomeView from './views/HomeView';
 import LoginView from './views/LoginView';
+import NotificationsView from './views/NotificationsView';
 import ReceiptView from './views/ReceiptView';
 import RecipeView from './views/RecipeView';
 import RecipeDetailView from './views/RecipeDetailView';
@@ -83,6 +88,7 @@ export default function App() {
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [notifyExpiry, setNotifyExpiryState] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   useEffect(() => {
     if (!user) {
@@ -91,6 +97,7 @@ export default function App() {
       setLikedIds(new Set());
       setHistory([]);
       setNotifyExpiryState(false);
+      setNotifications([]);
       return;
     }
     const uid = user.uid;
@@ -100,9 +107,12 @@ export default function App() {
       subscribeLikes(uid, setLikedIds, (e) => console.error('좋아요 구독 실패:', e)),
       subscribeHistory(uid, startOfMonth(), setHistory, (e) => console.error('소진 기록 구독 실패:', e)),
       subscribeNotifyExpiry(uid, setNotifyExpiryState, (e) => console.error('알림 설정 구독 실패:', e)),
+      subscribeNotifications(uid, setNotifications, (e) => console.error('알림함 구독 실패:', e)),
     ];
     return () => unsubs.forEach((unsub) => unsub());
   }, [user?.uid]);
+
+  const unreadNotifications = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
 
   const ingredientVMs: IngredientVM[] = useMemo(
     () => ingredients.map((i) => ({ ...i, daysLeft: calcDaysLeft(i.expiresAt) })),
@@ -178,6 +188,17 @@ export default function App() {
     });
   };
 
+  const handleMarkNotificationRead = (id: string) => {
+    if (!user) return;
+    markNotificationRead(user.uid, id).catch((e) => console.error('알림 읽음 처리 실패:', e));
+  };
+
+  const handleMarkAllNotificationsRead = () => {
+    if (!user) return;
+    const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
+    markAllNotificationsRead(user.uid, unreadIds).catch((e) => console.error('알림 일괄 읽음 처리 실패:', e));
+  };
+
   const handleConsume = (item: IngredientVM, action: ConsumeAction) => {
     if (!user) return;
     consumeIngredient(user.uid, item, action)
@@ -210,8 +231,19 @@ export default function App() {
                   ingredients={ingredientVMs}
                   history={history}
                   photoURL={user.photoURL}
+                  unreadNotifications={unreadNotifications}
                   onAdd={handleAddIngredient}
                   onConsume={handleConsume}
+                />
+              }
+            />
+            <Route
+              path="/notifications"
+              element={
+                <NotificationsView
+                  notifications={notifications}
+                  onMarkRead={handleMarkNotificationRead}
+                  onMarkAllRead={handleMarkAllNotificationsRead}
                 />
               }
             />

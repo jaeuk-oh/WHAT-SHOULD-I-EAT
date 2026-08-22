@@ -145,6 +145,60 @@ describe('users/{uid}/history — 소진 기록', () => {
   });
 });
 
+describe('users/{uid}/notifications — 알림함', () => {
+  const notif = { title: '곧 상하는 재료 2개가 있어요', body: '두부(D-1), 계란(오늘까지) — 먼저 써보세요.', read: false, at: Timestamp.now() };
+
+  it('클라이언트는 알림을 만들 수 없다 — 크론(Admin SDK)만 쓴다', async () => {
+    await reset();
+    await assertFails(setDoc(doc(myDb(), 'users', ME, 'notifications', 'n1'), notif));
+  });
+
+  it('본인 알림은 읽을 수 있다', async () => {
+    await reset();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', ME, 'notifications', 'n1'), notif);
+    });
+    await assertSucceeds(getDoc(doc(myDb(), 'users', ME, 'notifications', 'n1')));
+  });
+
+  it('read 필드만 바꿔 읽음 처리할 수 있다', async () => {
+    await reset();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', ME, 'notifications', 'n1'), notif);
+    });
+    await assertSucceeds(
+      setDoc(doc(myDb(), 'users', ME, 'notifications', 'n1'), { read: true }, { merge: true }),
+    );
+  });
+
+  it('read 외의 필드는 고칠 수 없다 — 내용 조작 차단', async () => {
+    await reset();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', ME, 'notifications', 'n1'), notif);
+    });
+    await assertFails(
+      updateDoc(doc(myDb(), 'users', ME, 'notifications', 'n1'), { title: '조작된 제목' }),
+    );
+  });
+
+  it('본인 알림은 지울 수 있다', async () => {
+    await reset();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', ME, 'notifications', 'n1'), notif);
+    });
+    await assertSucceeds(deleteDoc(doc(myDb(), 'users', ME, 'notifications', 'n1')));
+  });
+
+  it('남의 알림은 읽지도 지우지도 못한다', async () => {
+    await reset();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', OTHER, 'notifications', 'n1'), notif);
+    });
+    await assertFails(getDoc(doc(myDb(), 'users', OTHER, 'notifications', 'n1')));
+    await assertFails(deleteDoc(doc(myDb(), 'users', OTHER, 'notifications', 'n1')));
+  });
+});
+
 describe('usage/{uid} — 사용량 카운터', () => {
   it('본인 잔여 횟수는 읽을 수 있다', async () => {
     await reset();

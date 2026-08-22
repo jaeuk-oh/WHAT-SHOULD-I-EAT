@@ -156,7 +156,7 @@ export default function SettingsView({
           </section>
 
           <p className="px-5 text-xs text-outline leading-relaxed">
-            문의: <a href="mailto:support@example.com" className="underline">support@example.com</a>
+            문의: <a href="mailto:tony66@whatonsolve.com" className="underline">tony66@whatonsolve.com</a>
           </p>
         </main>
       </div>
