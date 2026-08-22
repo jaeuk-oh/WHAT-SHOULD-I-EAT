@@ -2,6 +2,10 @@
 
 영수증만 올리면, 오늘 뭐 먹을지 정해드려요. 냉장고 재료 관리 + AI 레시피 추천 서비스.
 
+"내가 가진 재료로 뭘 만들 수 있나"는 규칙으로 못 푼다. 재료 조합의 경우의 수가 무한하고,
+같은 재료라도 사용자 요청("매운 거", "빨리 되는 거")에 따라 답이 달라진다. 그래서 이 부분만
+생성형 모델에 맡기고, 나머지(재고 관리, 사용량 집계, 결제 없음)는 전부 코드로 처리한다.
+
 - **제품 정의** (누가·왜 쓰는가, 기능 우선순위): [`docs/PRODUCT.md`](docs/PRODUCT.md)
 - **런칭 계획** (아키텍처, 블로커, 체크리스트): [`docs/LAUNCH_PLAN.md`](docs/LAUNCH_PLAN.md)
 - **운영 런북** (장애 대응, 배포): [`docs/RUNBOOK.md`](docs/RUNBOOK.md)
@@ -67,6 +71,71 @@ NVIDIA API 키는 서버에만 존재한다.
 무료 할당량이 하루 10,000 유닛이고 검색 1회가 100 유닛이라 **하루 100회가 상한**이다.
 쿼리 단위로 Firestore `youtubeCache`에 7일간 캐시해 이 한도를 넘지 않게 한다.
 사용자가 늘면 사용자별 쿼터(`api/_quota.ts`)만으로는 부족하니 전역 상한을 함께 걸어야 한다.
+
+## 실패와 발견
+
+### firebase-admin을 14로 올렸다가 프로덕션 API가 전부 500이 났다
+
+PR을 병합하면서 두 브랜치가 서로 다른 `firebase-admin` 버전을 갖고 있었다. 버전 숫자만 보고
+높은 쪽(`^14.2.0`)을 골랐다. 배포 후 인증이 필요 없는 `GET /api/recommend`까지 500이 났다 —
+정적 페이지는 뜨는데 `/api/*`가 전부 죽은 상태였다.
+
+`vercel logs`는 로그인이 있어야 볼 수 있어서, 로그인 없이 쓸 수 있는 두 가지로 원인을 좁혔다.
+`vercel build`를 프로젝트 사본에서 실행해 실제 배포 산출물(`.vercel/output/functions/*.func`)을
+만들어 그대로 로드해봤고, 임시 진단 엔드포인트를 배포해 의심 모듈들을 각각 `import()`로 시도한
+결과를 JSON으로 반환하게 했다. `firebase-admin/auth`를 쓰는 엔드포인트만 죽고, 안 쓰는 크론만
+살아있다는 게 드러났다.
+
+```
+ERR_REQUIRE_ESM: require() of ES Module .../jose/dist/webapi/index.js
+                 from .../jwks-rsa/src/utils.js not supported
+```
+
+`firebase-admin/auth → jwks-rsa(CommonJS) → require('jose')` 경로가 있는데, `firebase-admin 14`가
+끌어오는 `jwks-rsa 4.x`는 `jose ^6`(ESM 전용)을 쓴다. 13.x는 `jose ^4`(CJS 진입점 있음)를 쓴다.
+`firebase-admin`을 13.10.0으로 되돌려서 해결했다. 모듈 로드 실패는 배포 후에야 일어나므로
+타입체크·빌드·CI 어디에서도 안 걸렸다.
+
+### 알림 기능이 에러 하나 없이 조용히 죽어 있었다
+
+`firestore.rules`의 `users/{uid}` 쓰기 허용 필드 목록에 `notifyExpiry`가 없었다. 알림 토글은
+`PERMISSION_DENIED`로 실패했지만 서버 로그에는 아무것도 안 남았고, 타입체크·빌드·기존 CI는
+전부 통과했다 — 보안 규칙은 코드와 별도로 배포되는 산출물이라 아무도 못 잡았다.
+
+에뮬레이터 기반 규칙 테스트 23케이스를 CI에 추가했다(`npm run test:rules`). 이 테스트가 실제로
+이 클래스의 버그를 잡는지 검증하려고, 방금 고친 필드를 다시 지운 브랜치를 만들어 CI를 돌려봤다.
+타입체크+빌드(`verify`) 잡은 여전히 통과했지만, 새로 추가한 `firestore-rules` 잡은
+`not ok - notifyExpiry 를 켜고 끌 수 있다`로 정확히 실패했다.
+
+### NVIDIA 모델이 답 대신 "생각"만 하다 잘렸다
+
+OpenAI에서 NVIDIA NIM으로 옮기며 텍스트 모델로 `nvidia/nemotron-3.5-lightning-30b-a3b`를 골랐다.
+첫 실제 호출에서 `max_tokens: 200`을 줬더니 `finish_reason: "length"`로 끊겼고, `content`에는
+JSON 대신 "Analyze User Input... Identify Korean Dish with Tofu and Eggs..." 같은 사고 과정만
+담겨 있었다.
+
+이 모델은 기본적으로 reasoning 트레이스를 `content`에 그대로 흘려보낸다.
+`chat_template_kwargs: {"enable_thinking": false}`를 추가하니 같은 요청이 11초 만에
+`{"title": "두부 스크램블"}` 같은 깨끗한 JSON만 반환했다(`api/_core.ts`의 `createTextCompletion`).
+
+## 실제 검증
+
+- `recommendRecipes` / `getRecipeDetail` / `scanReceiptImage` 세 함수를 `NVIDIA_API_KEY`로 직접
+  호출해 확인했다. 임박 재료(D-1) 우선순위, 재료 커버리지, 조리법 단계·팁이 프롬프트대로 나왔다.
+- 프로덕션 배포 후 런북 스모크 테스트: `GET /` → 200, `GET /api/*` → 405, `POST /api/*`(미인증)
+  → 401, `GET /api/cron/expiry-notify`(무인증) → 503.
+- 보안 규칙 회귀 테스트 23케이스가 CI의 `firestore-rules` 잡에서 통과한다.
+- 영수증 인식은 API 배선(base64 이미지 전달, JSON 파싱, 빈 결과 처리)만 확인했다 — 실물 영수증
+  정확도는 아직 안 봤다(아래 한계 참고).
+
+## 한계
+
+- 영수증 인식(NVIDIA 비전 모델)의 실물 정확도를 아직 확인하지 않았다. 작은 글씨가 많은 실제
+  한국 영수증에서 얼마나 정확한지는 배포 후 실사용으로 확인해야 한다.
+- 개인정보처리방침의 운영자명·사업장 주소·시행일이 아직 플레이스홀더다.
+- `CRON_SECRET`을 등록하지 않아 임박 재료 알림 크론이 의도적으로 비활성(503) 상태다.
+- NVIDIA NIM은 구조화 출력(json schema)을 지원하지 않아, 응답 스키마가 프롬프트 텍스트로만
+  강제된다. 모델을 바꾸면 파싱(`extractJson`)이 깨질 수 있다.
 
 ## 로컬 개발
 
