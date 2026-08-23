@@ -20,7 +20,7 @@
 - **AI 레시피 추천** — 임박 재료 우선, 자유 프롬프트/카테고리 필터/재추천, 대체 재료 안내.
   카드마다 **재료 커버리지**("내 재료 4개 사용 · 대파만 있으면 돼요")를 보여주고 재료순/빠른순/쉬운순 정렬 지원
 - **단계별 조리법** — 필요한 재료와 분량, 3~8단계 조리 순서, 단계별 체크
-- **레시피 영상** — YouTube Data API로 실제 요리 영상을 찾아 공식 임베드로 재생. AI가 *무엇을* 만들지 정하고, 영상이 *어떻게* 만드는지 보여준다
+- **레시피 영상** — YouTube Data API로 실제 요리 영상을 찾아 점수 상위 2개를 공식 임베드로 재생. AI가 *무엇을* 만들지 정하고, 영상이 *어떻게* 만드는지 보여준다
 - **커뮤니티/셀럽 레시피** — Firestore `recipes` 컬렉션, 중복 불가 좋아요
 - **요리 완료 → 재료 자동 소진** — 조리법 화면에서 "다 만들었어요"를 누르면 쓴 재료를 냉장고에서 정리
 - **임박 재료 알림** — 알림을 켠 유저의 D-1 이하 재료를 매일 알림함(벨 아이콘)에 쌓음 (Vercel Cron)
@@ -118,6 +118,19 @@ JSON 대신 "Analyze User Input... Identify Korean Dish with Tofu and Eggs..." �
 `chat_template_kwargs: {"enable_thinking": false}`를 추가하니 같은 요청이 11초 만에
 `{"title": "두부 스크램블"}` 같은 깨끗한 JSON만 반환했다(`api/_core.ts`의 `createTextCompletion`).
 
+### 캐러셀 스크롤바가 파이어폭스에서만 숨겨졌다
+
+가로 스크롤 카드(홈 화면 "곧 먹어야 해요", 레시피 카테고리/정렬 탭 등 4곳)에
+`style={{ scrollbarWidth: 'none' }}`만 적용해뒀다. 이 속성은 Firefox 전용이라, 실제 사용자
+대부분이 쓰는 iOS Safari·Chrome에서는 스크롤바가 그대로 보여 캐러셀이 아니라 그냥 넘치는
+목록처럼 보였다. 타입체크·빌드·CI 어디에도 걸리지 않는 시각적 버그라 코드를 다시 읽다가
+발견했다.
+
+`-webkit-scrollbar`까지 지우는 `.scrollbar-hide` CSS 유틸을 추가해 4곳(HomeView 2곳,
+RecipeView 2곳)에 적용했다. "곧 먹어야 해요" 캐러셀에는 `snap-mandatory`와 현재 위치를
+보여주는 점 인디케이터도 추가했다. 실제 iOS Safari/Chrome 기기에서 스크롤바가 사라졌는지는
+아직 확인하지 못했다(한계 참고).
+
 ## 실제 검증
 
 - `recommendRecipes` / `getRecipeDetail` / `scanReceiptImage` 세 함수를 `NVIDIA_API_KEY`로 직접
@@ -136,6 +149,10 @@ JSON 대신 "Analyze User Input... Identify Korean Dish with Tofu and Eggs..." �
 - `CRON_SECRET`을 등록하지 않아 임박 재료 알림 크론이 의도적으로 비활성(503) 상태다.
 - NVIDIA NIM은 구조화 출력(json schema)을 지원하지 않아, 응답 스키마가 프롬프트 텍스트로만
   강제된다. 모델을 바꾸면 파싱(`extractJson`)이 깨질 수 있다.
+- 모바일 UX 변경(영상 개수 축소, 캐러셀 스크롤바 숨김, 점 인디케이터, 로딩 애니메이션)은
+  타입체크·빌드·`vite preview` 정적 서빙까지만 확인했다. 스크린샷 가능한 브라우저 도구가 없어
+  실제 모바일 뷰포트에서 스크롤바가 사라졌는지, 점 인디케이터가 스크롤 위치와 맞게 움직이는지는
+  실기기로 확인하지 못했다.
 
 ## 로컬 개발
 
