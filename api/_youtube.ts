@@ -17,13 +17,14 @@ const VIDEOS_URL = 'https://www.googleapis.com/youtube/v3/videos';
 const CACHE_COLLECTION = 'youtubeCache';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** 캐시 스키마가 바뀌면 올린다 — 옛 캐시가 자동으로 무효화된다 */
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 /**
  * search.list는 결과 개수와 무관하게 100 유닛이다.
  * 그래서 후보를 넉넉히 받아 우리 기준으로 다시 정렬하는 편이 공짜로 이득이다.
  */
 const CANDIDATE_COUNT = 25;
-const RETURN_COUNT = 6;
+/** 화면 하나에 영상 6개는 과했다 — 가장 점수 높은 것만 보여준다 */
+const RETURN_COUNT = 2;
 
 export interface YoutubeVideo {
   videoId: string;
