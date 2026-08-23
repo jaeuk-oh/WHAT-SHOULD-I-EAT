@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Bookmark, Check, ChefHat, Circle, Info, Lightbulb, Share2, ShoppingCart } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import AppHeader from '../components/AppHeader';
+import LoadingMessages from '../components/LoadingMessages';
 import RecipeVideos from '../components/RecipeVideos';
 import { useToast } from '../components/Toast';
 import { ApiError, fetchRecipeDetail } from '../lib/api';
@@ -191,11 +192,17 @@ export default function RecipeDetailView({
 
         <main className="flex-1 flex flex-col px-5 py-4 gap-6 pb-32">
           {loading ? (
-            <div className="flex flex-col gap-4 animate-pulse" aria-busy="true">
-              <div className="h-8 bg-surface-container-high rounded w-3/4" />
-              <div className="h-4 bg-surface-container-high rounded w-1/2" />
-              <div className="h-32 bg-surface-container-high rounded-xl" />
-              <div className="h-48 bg-surface-container-high rounded-xl" />
+            <div className="flex flex-col gap-4" aria-busy="true">
+              <LoadingMessages
+                messages={['조리법을 준비하고 있어요...', '재료와 분량을 확인하고 있어요...', '거의 다 됐어요...']}
+                className="text-sm font-semibold text-primary"
+              />
+              <div className="flex flex-col gap-4 animate-pulse">
+                <div className="h-8 bg-surface-container-high rounded w-3/4" />
+                <div className="h-4 bg-surface-container-high rounded w-1/2" />
+                <div className="h-32 bg-surface-container-high rounded-xl" />
+                <div className="h-48 bg-surface-container-high rounded-xl" />
+              </div>
             </div>
           ) : error || !detail ? (
             <div className="bg-white rounded-xl p-6 text-center space-y-3 border border-surface-variant mt-10">

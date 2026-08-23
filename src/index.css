@@ -41,3 +41,16 @@ body {
   background-color: var(--color-background);
   color: var(--color-on-background);
 }
+
+/*
+ * 가로 스크롤 캐러셀용. `style={{ scrollbarWidth: 'none' }}`은 Firefox에만 먹혀서
+ * 실제 사용자 대부분이 쓰는 iOS Safari/Chrome에서는 스크롤바가 그대로 보여
+ * "캐러셀"이 아니라 그냥 넘치는 목록처럼 보였다. -webkit-scrollbar까지 같이 지운다.
+ */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

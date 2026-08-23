@@ -1,7 +1,9 @@
 import React, { useRef, useState } from 'react';
+import { motion } from 'motion/react';
 import { Camera, CheckCircle, Plus, Receipt, RefreshCw, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AppHeader from '../components/AppHeader';
+import LoadingMessages from '../components/LoadingMessages';
 import { useToast } from '../components/Toast';
 import { ApiError, scanReceipt } from '../lib/api';
 import { fileToCompressedDataUrl } from '../lib/image';
@@ -115,9 +117,19 @@ export default function ReceiptView({ onSave }: { onSave: (items: NewIngredient[
               </div>
             )}
             {scanning && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/60">
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/60 overflow-hidden">
+                {/* 스캔 라인 — 영수증을 훑는 느낌을 준다 */}
+                <motion.div
+                  className="absolute inset-x-0 h-10 bg-gradient-to-b from-transparent via-primary/50 to-transparent"
+                  initial={{ top: '-10%' }}
+                  animate={{ top: ['-10%', '110%'] }}
+                  transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+                />
                 <RefreshCw size={32} className="animate-spin text-primary mb-2" />
-                <p className="text-sm font-semibold text-primary">재료를 인식하고 있어요...</p>
+                <LoadingMessages
+                  messages={['영수증을 살펴보고 있어요...', '글자를 읽고 있어요...', '재료로 정리하고 있어요...']}
+                  className="text-sm font-semibold text-primary text-center px-4"
+                />
               </div>
             )}
           </div>

@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { AlertTriangle, Bookmark, ChefHat, Check, ChevronRight, Info, RefreshCw, Send, ShoppingCart, SlidersHorizontal, Wand2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import AppHeader from '../components/AppHeader';
+import LoadingMessages from '../components/LoadingMessages';
 import { useToast } from '../components/Toast';
 import { fetchRecommendations } from '../lib/api';
 import { subscribeRecipes } from '../lib/db';
@@ -183,7 +184,7 @@ export default function RecipeView({
         <main className="flex-1 flex flex-col px-5 py-6 gap-6 pb-32">
           {currentTab === '맞춤추천' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-6">
-              <div className="flex overflow-x-auto gap-2 pb-1 -mx-5 px-5 snap-x" style={{ scrollbarWidth: 'none' }}>
+              <div className="flex overflow-x-auto gap-2 pb-1 -mx-5 px-5 snap-x scrollbar-hide">
                 {CATEGORIES.map((cat) => (
                   <button
                     key={cat}
@@ -238,7 +239,7 @@ export default function RecipeView({
 
               {!loading && !error && recipes.length > 0 && (
                 <div className="flex flex-col gap-3 -mt-2">
-                  <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-5 px-5" style={{ scrollbarWidth: 'none' }}>
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-5 px-5 scrollbar-hide">
                     <SlidersHorizontal size={16} className="text-outline shrink-0" aria-hidden />
                     {(Object.keys(RECIPE_SORT_LABELS) as RecipeSort[]).map((key) => (
                       <button
@@ -271,18 +272,29 @@ export default function RecipeView({
 
               {loading ? (
                 <section className="flex flex-col gap-4" aria-busy="true">
-                  <p className="text-sm text-on-surface-variant flex items-center gap-2">
-                    <RefreshCw size={15} className="animate-spin text-primary" />
-                    {urgent.length > 0
-                      ? `${urgent[0].name}부터 쓸 메뉴를 찾고 있어요...`
-                      : '냉장고 재료로 만들 메뉴를 찾고 있어요...'}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <RefreshCw size={15} className="animate-spin text-primary shrink-0" />
+                    <LoadingMessages
+                      messages={[
+                        urgent.length > 0 ? `${urgent[0].name}부터 쓸 메뉴를 찾고 있어요...` : '냉장고 재료로 만들 메뉴를 찾고 있어요...',
+                        '어울리는 레시피를 고르고 있어요...',
+                        '조금만 기다려주세요...',
+                      ]}
+                      className="text-sm text-on-surface-variant"
+                    />
+                  </div>
                   {[0, 1, 2].map((i) => (
-                    <div key={i} className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant animate-pulse space-y-3">
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.08 }}
+                      className="bg-white rounded-xl p-5 shadow-sm border border-surface-variant animate-pulse space-y-3"
+                    >
                       <div className="h-6 bg-surface-container-high rounded w-2/3" />
                       <div className="h-4 bg-surface-container-high rounded w-1/2" />
                       <div className="h-4 bg-surface-container-high rounded w-full" />
-                    </div>
+                    </motion.div>
                   ))}
                 </section>
               ) : error ? (

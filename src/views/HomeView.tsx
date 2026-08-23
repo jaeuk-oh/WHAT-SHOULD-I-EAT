@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertCircle, Apple, Beef, Camera, Egg, Leaf, Milk, Package, Plus, Search,
@@ -254,6 +254,16 @@ export default function HomeView({
   const [consumeTarget, setConsumeTarget] = useState<IngredientVM | null>(null);
   const [activeCategory, setActiveCategory] = useState('전체');
   const [search, setSearch] = useState('');
+  const [urgentIndex, setUrgentIndex] = useState(0);
+  const urgentTrackRef = useRef<HTMLDivElement>(null);
+
+  /** 카드 하나 폭(w-48=192px) + 간격(gap-4=16px) 기준으로 지금 몇 번째가 보이는지 추정한다. */
+  const handleUrgentScroll = () => {
+    const el = urgentTrackRef.current;
+    if (!el) return;
+    const step = 208;
+    setUrgentIndex(Math.round(el.scrollLeft / step));
+  };
 
   const categories = useMemo(
     () => ['전체', ...Array.from(new Set(ingredients.map((i) => i.category)))],
@@ -314,7 +324,11 @@ export default function HomeView({
             <h2 className="text-xl font-semibold flex items-center gap-2 text-on-surface">
               <AlertCircle className="text-error" size={24} /> 곧 먹어야 해요
             </h2>
-            <div className="flex overflow-x-auto gap-4 pb-4 -mx-5 px-5 snap-x" style={{ scrollbarWidth: 'none' }}>
+            <div
+              ref={urgentTrackRef}
+              onScroll={handleUrgentScroll}
+              className="flex overflow-x-auto gap-4 pb-4 -mx-5 px-5 snap-x snap-mandatory scrollbar-hide"
+            >
               {urgent.map((item) => (
                 <button
                   key={item.id}
@@ -338,6 +352,16 @@ export default function HomeView({
                 </button>
               ))}
             </div>
+            {urgent.length > 1 && (
+              <div className="flex justify-center gap-1.5" aria-hidden="true">
+                {urgent.map((item, i) => (
+                  <span
+                    key={item.id}
+                    className={`h-1.5 rounded-full transition-all ${i === urgentIndex ? 'w-4 bg-primary' : 'w-1.5 bg-outline-variant'}`}
+                  />
+                ))}
+              </div>
+            )}
           </section>
         )}
 
@@ -363,7 +387,7 @@ export default function HomeView({
             </div>
           )}
 
-          <div className="flex overflow-x-auto gap-2 pb-1 -mx-5 px-5 snap-x" style={{ scrollbarWidth: 'none' }}>
+          <div className="flex overflow-x-auto gap-2 pb-1 -mx-5 px-5 snap-x scrollbar-hide">
             {categories.map((cat) => (
               <button
                 key={cat}
