@@ -9,3 +9,6 @@ coverage/
 .omc/
 .vercel/
 .vercel
+
+# 포트폴리오 분석 산출물 (공개 저장소에 올리지 않는다 — 면접 취약점 자체 분석 포함)
+.ai-profile/
