@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Bell, Bookmark, ChevronRight, FileText, LogOut, Shield, UserCircle, UserX } from 'lucide-react';
+import { Bell, Bookmark, ChevronRight, FileText, LogOut, Refrigerator, Shield, UserCircle, UserX } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { User } from 'firebase/auth';
 import AppHeader from '../components/AppHeader';
 import { useToast } from '../components/Toast';
 import { deleteAccount } from '../lib/api';
+import { FRIDGE_TYPES, FRIDGE_TYPE_LABELS, type FridgeType } from '../types';
 
 const CONFIRM_WORD = '탈퇴';
 
@@ -77,11 +78,15 @@ export default function SettingsView({
   onLogout,
   notifyExpiry,
   onToggleNotify,
+  fridgeType,
+  onSetFridgeType,
 }: {
   user: User;
   onLogout: () => Promise<void>;
   notifyExpiry: boolean;
   onToggleNotify: () => void;
+  fridgeType: FridgeType;
+  onSetFridgeType: (type: FridgeType) => void;
 }) {
   const navigate = useNavigate();
   const toast = useToast();
@@ -136,6 +141,32 @@ export default function SettingsView({
                 <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${notifyExpiry ? 'translate-x-4' : ''}`} />
               </span>
             </button>
+          </section>
+
+          <section className="rounded-xl border border-surface-variant mx-5 p-4 space-y-3">
+            <span className="flex items-center gap-3 font-medium">
+              <Refrigerator size={20} className="text-on-surface-variant" />
+              가상 냉장고 모양
+            </span>
+            <p className="text-xs text-on-surface-variant -mt-2">
+              홈 화면에서 재료를 냉장고 안에 넣어보는 모양이에요. 실제 기종과 무관해요.
+            </p>
+            <div className="flex gap-2">
+              {FRIDGE_TYPES.map((type) => (
+                <button
+                  key={type}
+                  onClick={() => onSetFridgeType(type)}
+                  aria-pressed={fridgeType === type}
+                  className={`flex-1 h-12 rounded-lg text-sm font-semibold transition-colors ${
+                    fridgeType === type
+                      ? 'bg-primary text-white'
+                      : 'bg-surface-container-low text-on-surface-variant border border-outline-variant'
+                  }`}
+                >
+                  {FRIDGE_TYPE_LABELS[type]}
+                </button>
+              ))}
+            </div>
           </section>
 
           <section className="rounded-xl overflow-hidden border border-surface-variant divide-y divide-surface-variant mx-5">

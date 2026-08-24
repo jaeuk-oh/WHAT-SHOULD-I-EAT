@@ -122,9 +122,29 @@ export default function RecipeView({
   useEffect(() => {
     // 재료를 하나도 등록하지 않은 상태에서는 자동으로 AI를 부르지 않는다 — 등록을 유도하는 화면을 먼저 보여준다.
     // 재료가 생기면(등록 직후 구독이 늦게 들어온 경우 포함) 그때 한 번, 이미 받아둔 추천이 있으면 다시 생성하지 않고 그대로 보여준다.
-    if (ingredients.length > 0) ensureRecipesLoaded();
+    // prompt 쿼리 파라미터로 들어온 경우(가상 냉장고에서 재료 선택 후 진입)는 아래 효과가 새로 불러오므로 여기선 건너뛴다.
+    if (ingredients.length > 0 && !searchParams.get('prompt')) ensureRecipesLoaded();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ingredients.length]);
+
+  useEffect(() => {
+    // 홈 화면의 가상 냉장고에서 재료를 골라 들어온 경우: 그 재료들로 즉시 새로 추천받는다.
+    const promptParam = searchParams.get('prompt');
+    if (!promptParam) return;
+    setAiPrompt(promptParam);
+    track('recipe_prompt_submit', { hasPrompt: true, source: 'virtual_fridge' });
+    void loadRecipes({ category: activeCategory, prompt: promptParam });
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('prompt');
+        return next;
+      },
+      { replace: true },
+    );
+    // 최초 진입 시 한 번만 — 쿼리를 지운 뒤에는 다시 안 돈다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setTab = (tab: Tab) => setSearchParams(tab === '맞춤추천' ? {} : { tab }, { replace: true });
 

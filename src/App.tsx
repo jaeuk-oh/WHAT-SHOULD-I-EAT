@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Refrigerator } from 'lucide-react';
 import { useAuth } from './hooks/useAuth';
@@ -14,7 +14,9 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   saveRecipe,
+  setFridgeType,
   setNotifyExpiry,
+  subscribeFridgeType,
   subscribeHistory,
   subscribeIngredients,
   subscribeLikes,
@@ -29,6 +31,7 @@ import {
   startOfMonth,
   type AppNotification,
   type ConsumeAction,
+  type FridgeType,
   type HistoryEntry,
   type Ingredient,
   type IngredientVM,
@@ -37,6 +40,7 @@ import {
   type SavedRecipe,
   type SavedRecipeInput,
 } from './types';
+import FridgeEntryTransition from './components/FridgeEntryTransition';
 import HomeView from './views/HomeView';
 import LoginView from './views/LoginView';
 import NotificationsView from './views/NotificationsView';
@@ -106,11 +110,47 @@ export default function App() {
   useScreenViewTracking();
   const showBottomNav = useShowBottomNav();
 
+  /**
+   * 로그인 직후 냉장고 문 열기 트랜지션을 보여주기 위한 상태.
+   *
+   * justLoggedInRef: 이번 세션에서 실제로 로그인 버튼을 눌렀는지 추적.
+   *   - Firebase가 세션을 복원할 때(페이지 리로드) onAuthStateChanged가 user를
+   *     바로 non-null로 내려주는데, 그 경우에는 트랜지션을 보여주면 안 된다.
+   *   - 버튼을 직접 누른 경우에만 true가 된다.
+   *
+   * prevUserUidRef: undefined = 첫 렌더 이전, null = 비로그인, string = 로그인.
+   */
+  const justLoggedInRef = useRef(false);
+  const prevUserUidRef = useRef<string | null | undefined>(undefined);
+  const [showFridgeEntry, setShowFridgeEntry] = useState(false);
+
+  useEffect(() => {
+    // 첫 렌더: 현재 상태를 기준값으로 저장하고 종료 (트랜지션 미실행)
+    if (prevUserUidRef.current === undefined) {
+      prevUserUidRef.current = user?.uid ?? null;
+      return;
+    }
+    const wasLoggedOut = !prevUserUidRef.current;
+    const isNowLoggedIn = Boolean(user);
+    if (wasLoggedOut && isNowLoggedIn && justLoggedInRef.current) {
+      setShowFridgeEntry(true);
+      justLoggedInRef.current = false;
+    }
+    prevUserUidRef.current = user?.uid ?? null;
+  }, [user]);
+
+  /** login을 직접 호출하기 전에 ref를 세운다. */
+  const handleLogin = useCallback(async () => {
+    justLoggedInRef.current = true;
+    await login();
+  }, [login]);
+
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [notifyExpiry, setNotifyExpiryState] = useState(false);
+  const [fridgeType, setFridgeTypeState] = useState<FridgeType>('standard');
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   // AI 추천 레시피 목록 캐시. /recipes를 떠났다 돌아와도 재생성하지 않고 그대로 보여준다 —
@@ -127,6 +167,7 @@ export default function App() {
       setLikedIds(new Set());
       setHistory([]);
       setNotifyExpiryState(false);
+      setFridgeTypeState('standard');
       setNotifications([]);
       return;
     }
@@ -137,6 +178,7 @@ export default function App() {
       subscribeLikes(uid, setLikedIds, (e) => console.error('좋아요 구독 실패:', e)),
       subscribeHistory(uid, startOfMonth(), setHistory, (e) => console.error('소진 기록 구독 실패:', e)),
       subscribeNotifyExpiry(uid, setNotifyExpiryState, (e) => console.error('알림 설정 구독 실패:', e)),
+      subscribeFridgeType(uid, setFridgeTypeState, (e) => console.error('냉장고 타입 구독 실패:', e)),
       subscribeNotifications(uid, setNotifications, (e) => console.error('알림함 구독 실패:', e)),
     ];
     return () => unsubs.forEach((unsub) => unsub());
@@ -218,6 +260,15 @@ export default function App() {
     });
   };
 
+  const handleSetFridgeType = (type: FridgeType) => {
+    if (!user) return;
+    setFridgeTypeState(type); // 낙관적 업데이트
+    setFridgeType(user.uid, type).catch((e) => {
+      console.error('냉장고 타입 저장 실패:', e);
+      toast.error('설정 저장에 실패했어요. 잠시 후 다시 시도해주세요.');
+    });
+  };
+
   const handleMarkNotificationRead = (id: string) => {
     if (!user) return;
     markNotificationRead(user.uid, id).catch((e) => console.error('알림 읽음 처리 실패:', e));
@@ -279,7 +330,7 @@ export default function App() {
         <Route path="/privacy" element={<PrivacyView />} />
 
         {!user ? (
-          <Route path="*" element={<LoginView onLogin={login} error={authError} />} />
+          <Route path="*" element={<LoginView onLogin={handleLogin} error={authError} />} />
         ) : (
           <>
             <Route
@@ -291,6 +342,7 @@ export default function App() {
                   photoURL={user.photoURL}
                   unreadNotifications={unreadNotifications}
                   recipes={recipes}
+                  fridgeType={fridgeType}
                   onAdd={handleAddIngredient}
                   onConsume={handleConsume}
                 />
@@ -344,6 +396,8 @@ export default function App() {
                   onLogout={logout}
                   notifyExpiry={notifyExpiry}
                   onToggleNotify={handleToggleNotify}
+                  fridgeType={fridgeType}
+                  onSetFridgeType={handleSetFridgeType}
                 />
               }
             />
@@ -353,6 +407,11 @@ export default function App() {
       </Routes>
       {user && showBottomNav && <BottomNav />}
       {user && <FeedbackButton />}
+
+      {/* 로그인 직후에만 노출되는 냉장고 문 열기 입장 트랜지션 */}
+      {showFridgeEntry && (
+        <FridgeEntryTransition onComplete={() => setShowFridgeEntry(false)} />
+      )}
     </div>
   );
 }

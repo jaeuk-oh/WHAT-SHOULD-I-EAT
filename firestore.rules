@@ -26,11 +26,13 @@ service cloud.firestore {
     // ---------- 사용자 프로필 ----------
 
     function validProfile() {
-      return incoming().keys().hasOnly(['email', 'displayName', 'photoURL', 'createdAt', 'updatedAt', 'notifyExpiry'])
+      return incoming().keys().hasOnly(['email', 'displayName', 'photoURL', 'createdAt', 'updatedAt', 'notifyExpiry', 'fridgeType'])
         && (!('displayName' in incoming()) || incoming().displayName == null || incoming().displayName is string)
         && (!('email' in incoming()) || incoming().email == null || incoming().email is string)
         // 임박 재료 알림(인앱) 수신 여부. 크론(api/cron/expiry-notify.ts)이 이 필드로 대상자를 찾는다
-        && (!('notifyExpiry' in incoming()) || incoming().notifyExpiry is bool);
+        && (!('notifyExpiry' in incoming()) || incoming().notifyExpiry is bool)
+        // 가상 냉장고 일러스트 스타일. 실제 브랜드/모델이 아니라 mini/standard/sidebyside 중 하나
+        && (!('fridgeType' in incoming()) || incoming().fridgeType in ['mini', 'standard', 'sidebyside']);
     }
 
     match /users/{userId} {

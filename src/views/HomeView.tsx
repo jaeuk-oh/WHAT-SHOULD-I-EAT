@@ -1,16 +1,19 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertCircle, Apple, Beef, Camera, ChevronRight, Egg, Leaf, Milk, Package, Plus,
-  Refrigerator, Search, Settings, ShoppingBag, Trash2, Utensils, UtensilsCrossed,
+  AlertCircle, Camera, ChevronRight, LayoutGrid, List, Plus,
+  Refrigerator, Search, Settings, ShoppingBag, Trash2, Utensils, UtensilsCrossed, Wand2,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+import { ItemIcon } from '../components/ItemIcon';
 import NotificationBell from '../components/NotificationBell';
+import VirtualFridge from '../components/VirtualFridge';
 import { recipePath } from '../lib/paths';
 import {
   INGREDIENT_CATEGORIES,
   summarize,
   type ConsumeAction,
+  type FridgeType,
   type HistoryEntry,
   type IngredientCategory,
   type IngredientVM,
@@ -24,18 +27,6 @@ function freshnessBadge(daysLeft: number): { label: string; className: string } 
   if (daysLeft <= 5) return { label: '경고', className: 'bg-tertiary-container text-on-tertiary-container' };
   return { label: '안전', className: 'bg-primary-container/40 text-on-primary-container' };
 }
-
-export const ItemIcon = ({ category }: { category: string }) => {
-  switch (category) {
-    case '유제품': return <Milk size={20} />;
-    case '콩류': return <Package size={20} />;
-    case '채소류': return <Leaf size={20} />;
-    case '육류': return <Beef size={20} />;
-    case '기타': return <Egg size={20} />;
-    case '과일': return <Apple size={20} />;
-    default: return <Utensils size={20} />;
-  }
-};
 
 /* ---------------- 소진 처리 시트 ---------------- */
 
@@ -249,6 +240,7 @@ export default function HomeView({
   photoURL,
   unreadNotifications,
   recipes,
+  fridgeType,
   onAdd,
   onConsume,
 }: {
@@ -257,6 +249,7 @@ export default function HomeView({
   photoURL: string | null;
   unreadNotifications: number;
   recipes: RecommendedRecipe[];
+  fridgeType: FridgeType;
   onAdd: (item: NewIngredient) => Promise<void>;
   onConsume: (item: IngredientVM, action: ConsumeAction) => void;
 }) {
@@ -267,6 +260,22 @@ export default function HomeView({
   const [search, setSearch] = useState('');
   const [urgentIndex, setUrgentIndex] = useState(0);
   const urgentTrackRef = useRef<HTMLDivElement>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'fridge'>('list');
+  const [selectedForRecipe, setSelectedForRecipe] = useState<Set<string>>(new Set());
+
+  const toggleSelectForRecipe = (id: string) =>
+    setSelectedForRecipe((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const goRecipeWithSelection = () => {
+    const names = ingredients.filter((i) => selectedForRecipe.has(i.id)).map((i) => i.name);
+    if (names.length === 0) return;
+    navigate(`/recipes?prompt=${encodeURIComponent(names.join(', ') + '로 만들 수 있는 요리 위주로')}`);
+  };
 
   /** 카드 하나 폭(w-48=192px) + 간격(gap-4=16px) 기준으로 지금 몇 번째가 보이는지 추정한다. */
   const handleUrgentScroll = () => {
@@ -413,9 +422,29 @@ export default function HomeView({
         <section className="space-y-4">
           <div className="flex justify-between items-end">
             <h2 className="text-xl font-semibold">내 재료 <span className="text-base text-outline font-normal">{ingredients.length}개</span></h2>
-            <button onClick={() => setShowAddModal(true)} className="text-sm text-primary font-semibold flex items-center gap-1">
-              <Plus size={16} /> 직접 추가
-            </button>
+            <div className="flex items-center gap-3">
+              <div className="flex rounded-lg border border-outline-variant overflow-hidden">
+                <button
+                  onClick={() => setViewMode('list')}
+                  aria-pressed={viewMode === 'list'}
+                  aria-label="리스트로 보기"
+                  className={`p-1.5 ${viewMode === 'list' ? 'bg-primary text-white' : 'bg-white text-on-surface-variant'}`}
+                >
+                  <List size={16} />
+                </button>
+                <button
+                  onClick={() => setViewMode('fridge')}
+                  aria-pressed={viewMode === 'fridge'}
+                  aria-label="냉장고로 보기"
+                  className={`p-1.5 ${viewMode === 'fridge' ? 'bg-primary text-white' : 'bg-white text-on-surface-variant'}`}
+                >
+                  <LayoutGrid size={16} />
+                </button>
+              </div>
+              <button onClick={() => setShowAddModal(true)} className="text-sm text-primary font-semibold flex items-center gap-1">
+                <Plus size={16} /> 직접 추가
+              </button>
+            </div>
           </div>
 
           {ingredients.length >= 8 && (
@@ -449,13 +478,30 @@ export default function HomeView({
             ))}
           </div>
 
-          <div className="space-y-3">
-            {filtered.length === 0 ? (
-              <div className="text-center py-8 text-outline">
-                {search.trim() ? `"${search.trim()}"에 해당하는 재료가 없어요.` : '해당 카테고리의 재료가 없습니다.'}
-              </div>
-            ) : (
-              filtered.map((item) => {
+          {filtered.length === 0 ? (
+            <div className="text-center py-8 text-outline">
+              {search.trim() ? `"${search.trim()}"에 해당하는 재료가 없어요.` : '해당 카테고리의 재료가 없습니다.'}
+            </div>
+          ) : viewMode === 'fridge' ? (
+            <div className="space-y-3">
+              <VirtualFridge
+                type={fridgeType}
+                items={filtered}
+                selected={selectedForRecipe}
+                onToggleSelect={toggleSelectForRecipe}
+              />
+              {selectedForRecipe.size > 0 && (
+                <button
+                  onClick={goRecipeWithSelection}
+                  className="w-full h-12 rounded-xl bg-primary text-white font-semibold flex items-center justify-center gap-2 shadow-sm hover:bg-primary/90 transition-colors"
+                >
+                  <Wand2 size={18} /> 선택한 {selectedForRecipe.size}개로 추천받기
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filtered.map((item) => {
                 const badge = freshnessBadge(item.daysLeft);
                 return (
                 <div key={item.id} className="bg-white shadow-sm rounded-2xl p-4 flex items-center justify-between gap-3">
@@ -488,9 +534,9 @@ export default function HomeView({
                   </button>
                 </div>
                 );
-              })
-            )}
-          </div>
+              })}
+            </div>
+          )}
         </section>
       </div>
 
