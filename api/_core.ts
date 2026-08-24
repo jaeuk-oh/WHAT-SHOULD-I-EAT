@@ -74,6 +74,7 @@ export interface RecommendedRecipe {
   warningType: 'alert' | 'info';
   tags: string[];
   usedIngredients: { name: string; amount: string }[];
+  /** 추천 목록 카드에서는 쓰지 않는다 — 상세 화면(recipe-detail)이 따로 생성한다. 응답 속도를 위해 항상 빈 배열. */
   steps: string[];
   substitutes: { missing: string; replaceWith: string }[];
   /** 이 요리에 필요하지만 사용자에게 없는 재료 */
@@ -86,7 +87,6 @@ const RECOMMEND_JSON_SHAPE = `{
       "title": string, "time": string, "difficulty": "아주 쉬움"|"쉬움"|"보통"|"어려움", "servings": string,
       "warning": string, "warningType": "alert"|"info", "tags": string[],
       "usedIngredients": [{"name": string, "amount": string}],
-      "steps": string[],
       "substitutes": [{"missing": string, "replaceWith": string}],
       "missingIngredients": string[]
     }
@@ -123,8 +123,8 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
           'usedIngredients에는 이 레시피에 실제로 쓰는 재료와 1인분 기준 분량을 {name, amount} 형태로 넣고, 사용자가 가진 재료를 앞쪽에 둔다 (amount 예: "1/2개", "200g", "1큰술"). ' +
           'missingIngredients에는 이 요리에 꼭 필요하지만 사용자에게 없는 재료명만 넣는다. ' +
           '소금·후추·식용유·간장 같은 기본 조미료는 누구나 있다고 보고 missingIngredients에 넣지 않는다. ' +
-          'steps에는 실제로 따라 할 수 있는 조리 과정을 3~8단계로, 각 단계를 한 문장으로 넣는다 (번호는 붙이지 않는다). ' +
-          "servings는 '1인분' 형태. time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나. 모든 텍스트는 한국어.\n\n" +
+          "servings는 '1인분' 형태. time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나. 모든 텍스트는 한국어. " +
+          '조리 순서(steps)는 요구하지 않는다 — 사용자가 상세 화면을 열 때 따로 생성한다.\n\n' +
           `다른 설명 없이 아래 형식의 JSON 객체만 답한다(코드펜스 금지):\n${RECOMMEND_JSON_SHAPE}`,
       },
       { role: 'user', content: request },
@@ -142,7 +142,8 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
     warningType: r.warningType === 'alert' ? 'alert' : 'info',
     tags: Array.isArray(r.tags) ? r.tags : [],
     usedIngredients: Array.isArray(r.usedIngredients) ? r.usedIngredients : [],
-    steps: Array.isArray(r.steps) ? r.steps : [],
+    // 목록 카드는 steps를 쓰지 않는다 — 모델에도 요구하지 않아 응답이 빨라진다
+    steps: [],
     substitutes: Array.isArray(r.substitutes) ? r.substitutes : [],
     missingIngredients: Array.isArray(r.missingIngredients) ? r.missingIngredients : [],
   }));

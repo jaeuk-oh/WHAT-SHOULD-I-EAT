@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { ShoppingBag } from 'lucide-react';
+import { Refrigerator } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export default function LoginView({
@@ -30,7 +30,7 @@ export default function LoginView({
       <div className="bg-surface/70 backdrop-blur-md p-8 rounded-2xl shadow-lg border border-white/30 flex flex-col items-center w-full space-y-8">
         <div className="flex flex-col items-center space-y-4">
           <div className="w-24 h-24 rounded-2xl bg-white shadow-sm flex items-center justify-center border border-outline-variant/30">
-            <ShoppingBag size={48} className="text-primary" />
+            <Refrigerator size={48} className="text-primary" />
           </div>
           <div className="text-center space-y-2">
             <h1 className="text-3xl font-bold text-primary">냉털메이트</h1>

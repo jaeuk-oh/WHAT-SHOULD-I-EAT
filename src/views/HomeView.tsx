@@ -1,11 +1,12 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertCircle, Apple, Beef, Camera, Egg, Leaf, Milk, Package, Plus, Search,
-  Settings, ShoppingBag, Trash2, Utensils, UtensilsCrossed,
+  AlertCircle, Apple, Beef, Camera, ChevronRight, Egg, Leaf, Milk, Package, Plus,
+  Refrigerator, Search, Settings, ShoppingBag, Trash2, Utensils, UtensilsCrossed,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import NotificationBell from '../components/NotificationBell';
+import { recipePath } from '../lib/paths';
 import {
   INGREDIENT_CATEGORIES,
   summarize,
@@ -14,7 +15,15 @@ import {
   type IngredientCategory,
   type IngredientVM,
   type NewIngredient,
+  type RecommendedRecipe,
 } from '../types';
+
+/** 유통기한 임박도를 배지 색으로 한눈에 보여준다: 안전(초록)/경고(주황)/긴급(빨강). */
+function freshnessBadge(daysLeft: number): { label: string; className: string } {
+  if (daysLeft <= 2) return { label: '긴급', className: 'bg-error text-white' };
+  if (daysLeft <= 5) return { label: '경고', className: 'bg-tertiary-container text-on-tertiary-container' };
+  return { label: '안전', className: 'bg-primary-container/40 text-on-primary-container' };
+}
 
 export const ItemIcon = ({ category }: { category: string }) => {
   switch (category) {
@@ -239,6 +248,7 @@ export default function HomeView({
   history,
   photoURL,
   unreadNotifications,
+  recipes,
   onAdd,
   onConsume,
 }: {
@@ -246,6 +256,7 @@ export default function HomeView({
   history: HistoryEntry[];
   photoURL: string | null;
   unreadNotifications: number;
+  recipes: RecommendedRecipe[];
   onAdd: (item: NewIngredient) => Promise<void>;
   onConsume: (item: IngredientVM, action: ConsumeAction) => void;
 }) {
@@ -286,7 +297,10 @@ export default function HomeView({
 
   const header = (
     <header className="flex justify-between items-center p-5 sticky top-0 bg-surface z-50 shadow-sm max-w-2xl mx-auto w-full">
-      <div className="text-2xl font-bold text-primary">냉털메이트</div>
+      <div className="flex items-center gap-2 text-2xl font-bold text-primary">
+        <Refrigerator size={22} className="shrink-0" aria-hidden />
+        냉털메이트
+      </div>
       <div className="flex items-center gap-4">
         <NotificationBell unreadCount={unreadNotifications} />
         <Link to="/settings" aria-label="설정" className="text-on-surface-variant hover:text-primary transition-colors flex items-center">
@@ -316,7 +330,7 @@ export default function HomeView({
     <div className="flex flex-col min-h-screen">
       {header}
 
-      <div className="flex-1 px-5 py-6 space-y-8 pb-32 max-w-2xl mx-auto w-full">
+      <div className="flex-1 px-5 py-6 space-y-8 pb-48 max-w-2xl mx-auto w-full">
         <SavingsCard history={history} />
 
         {urgent.length > 0 && (
@@ -365,6 +379,37 @@ export default function HomeView({
           </section>
         )}
 
+        {recipes.length > 0 && (
+          <section className="space-y-4">
+            <div className="flex justify-between items-end">
+              <h2 className="text-xl font-semibold">오늘의 추천 레시피</h2>
+              <Link to="/recipes" className="text-sm text-primary font-semibold flex items-center gap-0.5">
+                전체보기 <ChevronRight size={16} />
+              </Link>
+            </div>
+            <div className="space-y-3">
+              {recipes.slice(0, 2).map((recipe) => (
+                <Link
+                  key={recipe.title}
+                  to={recipePath(recipe.title)}
+                  className="bg-white shadow-sm rounded-2xl p-4 flex items-center justify-between gap-3 hover:shadow-md transition-shadow"
+                >
+                  <div className="min-w-0">
+                    <h4 className="font-semibold truncate">{recipe.title}</h4>
+                    <p className="text-sm text-on-surface-variant mt-1">
+                      ⏱️ {recipe.time} · 🔥 {recipe.difficulty}
+                      {recipe.missingIngredients.length === 0 && (
+                        <span className="text-primary font-semibold"> · 바로 만들 수 있어요</span>
+                      )}
+                    </p>
+                  </div>
+                  <ChevronRight size={20} className="shrink-0 text-outline" />
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
         <section className="space-y-4">
           <div className="flex justify-between items-end">
             <h2 className="text-xl font-semibold">내 재료 <span className="text-base text-outline font-normal">{ingredients.length}개</span></h2>
@@ -410,7 +455,9 @@ export default function HomeView({
                 {search.trim() ? `"${search.trim()}"에 해당하는 재료가 없어요.` : '해당 카테고리의 재료가 없습니다.'}
               </div>
             ) : (
-              filtered.map((item) => (
+              filtered.map((item) => {
+                const badge = freshnessBadge(item.daysLeft);
+                return (
                 <div key={item.id} className="bg-white shadow-sm rounded-2xl p-4 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-4 min-w-0">
                     <div className="w-10 h-10 shrink-0 rounded-lg bg-secondary-container text-on-secondary-container flex items-center justify-center">
@@ -420,8 +467,8 @@ export default function HomeView({
                       <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="font-medium truncate">{item.name}</h4>
                         {item.quantity && <span className="text-xs text-on-surface-variant">{item.quantity}</span>}
-                        <span className={`px-2 py-0.5 rounded-full text-xs ${item.daysLeft <= 5 ? 'bg-surface-variant text-on-surface-variant' : 'bg-primary/10 text-primary'}`}>
-                          D-{item.daysLeft}
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${badge.className}`}>
+                          {badge.label} D-{item.daysLeft}
                         </span>
                       </div>
                       <div className="w-32 h-2 bg-surface-variant rounded-full mt-2 overflow-hidden">
@@ -440,13 +487,14 @@ export default function HomeView({
                     정리
                   </button>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </section>
       </div>
 
-      <div className="fixed bottom-0 left-0 w-full px-5 pb-6 pt-10 bg-gradient-to-t from-background via-background to-transparent z-40">
+      <div className="fixed bottom-16 left-0 w-full px-5 pb-2 pt-10 bg-gradient-to-t from-background via-background to-transparent z-40">
         <div className="flex gap-4 max-w-2xl mx-auto">
           <Link to="/receipt" className="flex-1 h-14 rounded-2xl bg-secondary-container text-on-secondary-container font-semibold flex items-center justify-center gap-2 shadow-sm">
             <Camera size={20} /> 영수증 올리기

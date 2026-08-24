@@ -1,12 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertTriangle, Bookmark, ChefHat, Check, ChevronRight, Info, RefreshCw, Send, ShoppingCart, SlidersHorizontal, Wand2 } from 'lucide-react';
+import { AlertTriangle, Bookmark, ChefHat, Check, ChevronRight, Info, PackagePlus, RefreshCw, Send, ShoppingCart, SlidersHorizontal, Wand2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import AppHeader from '../components/AppHeader';
 import LoadingMessages from '../components/LoadingMessages';
 import { useToast } from '../components/Toast';
-import { fetchRecommendations } from '../lib/api';
 import { subscribeRecipes } from '../lib/db';
+import { track } from '../lib/firebase';
 import { recipePath } from '../lib/paths';
 import {
   RECIPE_SORT_LABELS,
@@ -75,12 +75,22 @@ export default function RecipeView({
   likedIds,
   onToggleSave,
   onToggleLike,
+  recipes,
+  loading,
+  error,
+  loadRecipes,
+  ensureRecipesLoaded,
 }: {
   ingredients: IngredientVM[];
   savedTitles: Set<string>;
   likedIds: Set<string>;
   onToggleSave: (recipe: SavedRecipeInput, e: React.MouseEvent) => void;
   onToggleLike: (recipeId: string) => void;
+  recipes: RecommendedRecipe[];
+  loading: boolean;
+  error: string | null;
+  loadRecipes: (opts?: { exclude?: string[]; category?: string; prompt?: string }) => Promise<void>;
+  ensureRecipesLoaded: () => void;
 }) {
   const navigate = useNavigate();
   const toast = useToast();
@@ -91,9 +101,6 @@ export default function RecipeView({
 
   const [activeCategory, setActiveCategory] = useState('전체');
   const [aiPrompt, setAiPrompt] = useState('');
-  const [recipes, setRecipes] = useState<RecommendedRecipe[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [shared, setShared] = useState<CommunityRecipe[] | null>(null);
   const [sort, setSort] = useState<RecipeSort>('recommended');
   const [onlyAvailable, setOnlyAvailable] = useState(false);
@@ -108,45 +115,29 @@ export default function RecipeView({
   const communityList = (shared ?? []).filter((r) => r.type === 'community');
   const celebList = (shared ?? []).filter((r) => r.type === 'celeb');
 
-  const loadRecipes = useCallback(
-    async (opts?: { exclude?: string[]; category?: string; prompt?: string }) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const category = opts?.category ?? activeCategory;
-        const result = await fetchRecommendations({
-          ingredients: ingredients.map((i) => ({ name: i.name, category: i.category, daysLeft: i.daysLeft })),
-          category: category === '전체' ? undefined : category,
-          prompt: (opts?.prompt ?? aiPrompt).trim() || undefined,
-          exclude: opts?.exclude,
-        });
-        setRecipes(result);
-      } catch (e) {
-        console.error('레시피 추천 실패:', e);
-        setError(e instanceof Error ? e.message : '추천을 불러오지 못했어요.');
-      } finally {
-        setLoading(false);
-      }
-    },
-    // ingredients는 매 렌더 새 배열이라 의존성에 넣으면 무한 호출이 된다. 최초 1회 + 사용자 조작으로만 호출한다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeCategory, aiPrompt],
-  );
+  useEffect(() => {
+    return subscribeRecipes(setShared, (e) => console.error('레시피 목록 구독 실패:', e));
+  }, []);
 
   useEffect(() => {
-    void loadRecipes();
-    return subscribeRecipes(setShared, (e) => console.error('레시피 목록 구독 실패:', e));
+    // 재료를 하나도 등록하지 않은 상태에서는 자동으로 AI를 부르지 않는다 — 등록을 유도하는 화면을 먼저 보여준다.
+    // 재료가 생기면(등록 직후 구독이 늦게 들어온 경우 포함) 그때 한 번, 이미 받아둔 추천이 있으면 다시 생성하지 않고 그대로 보여준다.
+    if (ingredients.length > 0) ensureRecipesLoaded();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ingredients.length]);
 
   const setTab = (tab: Tab) => setSearchParams(tab === '맞춤추천' ? {} : { tab }, { replace: true });
 
   const handleCategory = (cat: string) => {
     setActiveCategory(cat);
-    void loadRecipes({ category: cat });
+    track('recipe_category_select', { category: cat });
+    void loadRecipes({ category: cat, prompt: aiPrompt });
   };
 
-  const openDetail = (title: string) => navigate(recipePath(title));
+  const openDetail = (title: string) => {
+    track('recipe_card_click', { title });
+    navigate(recipePath(title));
+  };
 
   const sharedEmptyState = (label: string) => (
     <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-2">
@@ -181,9 +172,11 @@ export default function RecipeView({
           ))}
         </div>
 
-        <main className="flex-1 flex flex-col px-5 py-6 gap-6 pb-32">
+        <main className="flex-1 flex flex-col px-5 py-6 gap-6 pb-48">
           {currentTab === '맞춤추천' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-6">
+              <p className="text-sm text-on-surface-variant -mb-2">냉장고 속 재료로 만드는 마법, AI가 골라드려요.</p>
+
               <div className="flex overflow-x-auto gap-2 pb-1 -mx-5 px-5 snap-x scrollbar-hide">
                 {CATEGORIES.map((cat) => (
                   <button
@@ -210,13 +203,21 @@ export default function RecipeView({
                   type="text"
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !loading) void loadRecipes(); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !loading) {
+                      track('recipe_prompt_submit', { hasPrompt: aiPrompt.trim().length > 0 });
+                      void loadRecipes({ category: activeCategory, prompt: aiPrompt });
+                    }
+                  }}
                   placeholder="오늘은 자극적인게 땡겨"
                   aria-label="추천 요청 입력"
                   className="flex-1 bg-transparent border-none focus:ring-0 text-sm outline-none"
                 />
                 <button
-                  onClick={() => void loadRecipes()}
+                  onClick={() => {
+                    track('recipe_prompt_submit', { hasPrompt: aiPrompt.trim().length > 0 });
+                    void loadRecipes({ category: activeCategory, prompt: aiPrompt });
+                  }}
                   disabled={loading}
                   aria-label="추천 받기"
                   className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-60"
@@ -225,17 +226,19 @@ export default function RecipeView({
                 </button>
               </div>
 
-              <section className="bg-primary-container/20 rounded-xl p-6 flex items-start gap-4 border border-primary-container/30 mt-2">
-                <ChefHat size={40} className="text-primary shrink-0" />
-                <p className="text-lg leading-relaxed text-on-surface">
-                  냉장고 살펴봤어요! <br />
-                  {urgent.length > 0 ? (
-                    <><span className="font-bold text-primary">곧 상하는 {urgent.slice(0, 2).map((i) => i.name).join('·')}</span>부터 쓸게요.</>
-                  ) : (
-                    <>지금 있는 재료로 만들 수 있는 메뉴를 골랐어요.</>
-                  )}
-                </p>
-              </section>
+              {ingredients.length > 0 && (
+                <section className="bg-primary-container/20 rounded-xl p-6 flex items-start gap-4 border border-primary-container/30 mt-2">
+                  <ChefHat size={40} className="text-primary shrink-0" />
+                  <p className="text-lg leading-relaxed text-on-surface">
+                    냉장고 살펴봤어요! <br />
+                    {urgent.length > 0 ? (
+                      <><span className="font-bold text-primary">곧 상하는 {urgent.slice(0, 2).map((i) => i.name).join('·')}</span>부터 쓸게요.</>
+                    ) : (
+                      <>지금 있는 재료로 만들 수 있는 메뉴를 골랐어요.</>
+                    )}
+                  </p>
+                </section>
+              )}
 
               {!loading && !error && recipes.length > 0 && (
                 <div className="flex flex-col gap-3 -mt-2">
@@ -270,7 +273,34 @@ export default function RecipeView({
                 </div>
               )}
 
-              {loading ? (
+              {ingredients.length === 0 && recipes.length === 0 && !loading && !error ? (
+                <section className="bg-white rounded-xl p-6 text-center space-y-4 border border-surface-variant">
+                  <PackagePlus size={36} className="mx-auto text-outline" />
+                  <div className="space-y-1">
+                    <p className="font-semibold text-on-surface">아직 등록된 재료가 없어요</p>
+                    <p className="text-sm text-on-surface-variant">
+                      냉장고 재료를 등록하면 있는 재료로 딱 맞는 메뉴를 추천해드려요.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => navigate('/')}
+                      className="w-full h-11 rounded-xl bg-primary text-white font-semibold"
+                    >
+                      재료 등록하러 가기
+                    </button>
+                    <button
+                      onClick={() => {
+                        track('recipe_skip_ingredients_click');
+                        void loadRecipes({ category: activeCategory, prompt: aiPrompt });
+                      }}
+                      className="w-full h-11 rounded-xl text-sm text-on-surface-variant font-medium hover:bg-surface-container-high transition-colors"
+                    >
+                      그냥 추천 받아볼게요
+                    </button>
+                  </div>
+                </section>
+              ) : loading ? (
                 <section className="flex flex-col gap-4" aria-busy="true">
                   <div className="flex items-center gap-2">
                     <RefreshCw size={15} className="animate-spin text-primary shrink-0" />
@@ -445,14 +475,15 @@ export default function RecipeView({
         </main>
 
         {currentTab === '맞춤추천' && !loading && (
-          <div className="fixed bottom-0 left-0 w-full md:max-w-md md:left-1/2 md:-translate-x-1/2 bg-gradient-to-t from-surface via-surface to-transparent pt-10 pb-8 px-5 z-40">
+          <div className="fixed bottom-16 left-0 w-full md:max-w-md md:left-1/2 md:-translate-x-1/2 bg-gradient-to-t from-surface via-surface to-transparent pt-10 pb-2 px-5 z-40">
             <button
               onClick={() => {
                 if (recipes.length === 0) {
                   toast.show('먼저 추천을 받아볼까요?');
                   return;
                 }
-                void loadRecipes({ exclude: recipes.map((r) => r.title) });
+                track('recipe_reroll_click');
+                void loadRecipes({ category: activeCategory, prompt: aiPrompt, exclude: recipes.map((r) => r.title) });
               }}
               className="w-full h-14 bg-primary text-white rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 hover:bg-primary/90"
             >

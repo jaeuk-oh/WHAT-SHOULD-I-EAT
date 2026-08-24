@@ -16,7 +16,8 @@ export type QuotaEndpoint =
   | 'recommend'
   | 'recipeDetail'
   | 'youtubeSearch'
-  | 'accountDelete';
+  | 'accountDelete'
+  | 'feedback';
 
 interface Limits {
   /** 하루 최대 호출 수 (KST 자정 리셋) */
@@ -36,6 +37,18 @@ export const LIMITS: Record<QuotaEndpoint, Limits> = {
   // 대부분은 캐시가 흡수하지만, 사용자가 늘면 전역 상한도 함께 걸어야 한다.
   youtubeSearch: { perDay: 40, windowSec: 60, perWindow: 10 },
   accountDelete: { perDay: 5, windowSec: 300, perWindow: 3 },
+  feedback: { perDay: 10, windowSec: 300, perWindow: 3 },
+};
+
+/**
+ * 피드백을 처음 남긴 사용자에게 주는 "이용권" — 해당 엔드포인트의 일일 한도에 더해지는 보너스.
+ * usage/{uid}.bonus에 저장되고(api/feedback.ts가 지급), evaluate()가 perDay에 더해서 판정한다.
+ */
+export const FEEDBACK_BONUS: Partial<Record<QuotaEndpoint, number>> = {
+  recommend: 20,
+  recipeDetail: 20,
+  receiptScan: 10,
+  youtubeSearch: 10,
 };
 
 export interface QuotaResult {
@@ -78,6 +91,7 @@ function evaluate(prev: EndpointState | undefined, limits: Limits, now: Date): {
   const sameDay = prev?.day === today;
   const count = sameDay ? (prev?.count ?? 0) : 0;
   const hits = (prev?.hits ?? []).filter((t) => typeof t === 'number' && t > windowStart);
+  // perDay는 이미 호출부에서 피드백 보너스가 더해진 값이다
 
   if (count >= limits.perDay) {
     return {
@@ -143,8 +157,12 @@ export async function consumeQuota(uid: string, endpoint: QuotaEndpoint): Promis
   try {
     return await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
-      const prev = snap.exists ? (snap.data()?.[endpoint] as EndpointState | undefined) : undefined;
-      const { result, next } = evaluate(prev, limits, now);
+      const data = snap.exists ? snap.data() : undefined;
+      const prev = data?.[endpoint] as EndpointState | undefined;
+      // 피드백을 남긴 사용자는 usage/{uid}.bonus에 추가 한도가 저장돼 있다 (api/feedback.ts가 지급)
+      const bonus = (data?.bonus?.[endpoint] as number | undefined) ?? 0;
+      const effectiveLimits = bonus > 0 ? { ...limits, perDay: limits.perDay + bonus } : limits;
+      const { result, next } = evaluate(prev, effectiveLimits, now);
       // 거절된 경우에도 정리된 윈도우 상태를 저장해 hits 배열이 무한히 자라지 않게 한다
       tx.set(ref, { [endpoint]: next, updatedAt: now }, { merge: true });
       return result;

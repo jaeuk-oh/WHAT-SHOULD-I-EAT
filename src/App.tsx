@@ -1,8 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
-import { ShoppingBag } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Refrigerator } from 'lucide-react';
 import { useAuth } from './hooks/useAuth';
 import { useToast } from './components/Toast';
+import BottomNav from './components/BottomNav';
+import FeedbackButton from './components/FeedbackButton';
+import { fetchRecommendations } from './lib/api';
+import { track } from './lib/firebase';
 import {
   addIngredients,
   consumeIngredient,
@@ -29,6 +33,7 @@ import {
   type Ingredient,
   type IngredientVM,
   type NewIngredient,
+  type RecommendedRecipe,
   type SavedRecipe,
   type SavedRecipeInput,
 } from './types';
@@ -42,12 +47,28 @@ import SavedView from './views/SavedView';
 import SettingsView from './views/SettingsView';
 import { PrivacyView, TermsView } from './views/LegalView';
 
+/** 화면 전환마다 어떤 경로를 거쳤는지 남긴다. UT처럼 사용 흐름을 나중에 되짚어보기 위함. */
+function useScreenViewTracking() {
+  const location = useLocation();
+  useEffect(() => {
+    track('screen_view', { path: location.pathname });
+  }, [location.pathname]);
+}
+
+const TAB_ROUTES = ['/', '/recipes', '/saved'];
+
+/** 하단 탭바는 3개 탭 화면에서만 보인다. 조리법 상세·영수증·설정 등 서브 화면에서는 숨긴다. */
+function useShowBottomNav(): boolean {
+  const location = useLocation();
+  return TAB_ROUTES.includes(location.pathname);
+}
+
 function SplashScreen() {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="flex flex-col items-center gap-4 animate-pulse">
         <div className="w-20 h-20 rounded-2xl bg-white shadow-sm flex items-center justify-center border border-outline-variant/30">
-          <ShoppingBag size={40} className="text-primary" />
+          <Refrigerator size={40} className="text-primary" />
         </div>
         <span className="text-xl font-bold text-primary">냉털메이트</span>
       </div>
@@ -82,6 +103,8 @@ export default function App() {
   const { user, loading: authLoading, error: authError, login, logout } = useAuth();
   const toast = useToast();
   const today = useDayTick();
+  useScreenViewTracking();
+  const showBottomNav = useShowBottomNav();
 
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
@@ -89,6 +112,13 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [notifyExpiry, setNotifyExpiryState] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+
+  // AI 추천 레시피 목록 캐시. /recipes를 떠났다 돌아와도 재생성하지 않고 그대로 보여준다 —
+  // 다시 만들어야 할 때(카테고리 변경, 검색어, "다른 메뉴 추천받기")만 loadRecipes를 명시적으로 호출한다.
+  const [recipes, setRecipes] = useState<RecommendedRecipe[]>([]);
+  const [recipesLoading, setRecipesLoading] = useState(false);
+  const [recipesError, setRecipesError] = useState<string | null>(null);
+  const [recipesFetched, setRecipesFetched] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -199,6 +229,34 @@ export default function App() {
     markAllNotificationsRead(user.uid, unreadIds).catch((e) => console.error('알림 일괄 읽음 처리 실패:', e));
   };
 
+  const loadRecipes = useCallback(
+    async (opts?: { exclude?: string[]; category?: string; prompt?: string }) => {
+      setRecipesLoading(true);
+      setRecipesError(null);
+      try {
+        const result = await fetchRecommendations({
+          ingredients: ingredientVMs.map((i) => ({ name: i.name, category: i.category, daysLeft: i.daysLeft })),
+          category: opts?.category && opts.category !== '전체' ? opts.category : undefined,
+          prompt: opts?.prompt?.trim() || undefined,
+          exclude: opts?.exclude,
+        });
+        setRecipes(result);
+      } catch (e) {
+        console.error('레시피 추천 실패:', e);
+        setRecipesError(e instanceof Error ? e.message : '추천을 불러오지 못했어요.');
+      } finally {
+        setRecipesLoading(false);
+        setRecipesFetched(true);
+      }
+    },
+    [ingredientVMs],
+  );
+
+  /** /recipes에 처음 들어왔을 때만 부른다. 뒤로 갔다 다시 들어오는 건 "필요"가 아니라 캐시로 보여준다. */
+  const ensureRecipesLoaded = useCallback(() => {
+    if (!recipesFetched && !recipesLoading) void loadRecipes();
+  }, [recipesFetched, recipesLoading, loadRecipes]);
+
   const handleConsume = (item: IngredientVM, action: ConsumeAction) => {
     if (!user) return;
     consumeIngredient(user.uid, item, action)
@@ -232,6 +290,7 @@ export default function App() {
                   history={history}
                   photoURL={user.photoURL}
                   unreadNotifications={unreadNotifications}
+                  recipes={recipes}
                   onAdd={handleAddIngredient}
                   onConsume={handleConsume}
                 />
@@ -257,6 +316,11 @@ export default function App() {
                   likedIds={likedIds}
                   onToggleSave={toggleSave}
                   onToggleLike={handleToggleLike}
+                  recipes={recipes}
+                  loading={recipesLoading}
+                  error={recipesError}
+                  loadRecipes={loadRecipes}
+                  ensureRecipesLoaded={ensureRecipesLoaded}
                 />
               }
             />
@@ -287,6 +351,8 @@ export default function App() {
           </>
         )}
       </Routes>
+      {user && showBottomNav && <BottomNav />}
+      {user && <FeedbackButton />}
     </div>
   );
 }

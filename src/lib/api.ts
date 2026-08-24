@@ -86,3 +86,8 @@ export async function fetchRecipeVideos(title: string): Promise<YoutubeVideo[]> 
 export async function deleteAccount(): Promise<void> {
   await authedPost<{ ok: true }>('/api/account-delete', {});
 }
+
+/** 사용자 의견/불편사항 제출. 처음 남기는 피드백에는 서버가 이용권(일일 한도 보너스)을 지급한다. */
+export async function submitFeedback(message: string, path: string): Promise<{ bonusGranted: boolean }> {
+  return authedPost<{ ok: true; bonusGranted: boolean }>('/api/feedback', { message, path });
+}

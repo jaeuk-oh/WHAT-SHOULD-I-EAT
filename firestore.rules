@@ -119,6 +119,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ---------- 사용자 피드백 ----------
+    // api/feedback.ts(Admin SDK)만 쓴다. 클라이언트는 직접 읽거나 쓸 수 없다.
+
+    match /feedback/{feedbackId} {
+      allow read, write: if false;
+    }
+
     // ---------- 공유 레시피 ----------
 
     match /recipes/{recipeId} {

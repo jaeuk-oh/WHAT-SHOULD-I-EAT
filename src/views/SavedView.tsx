@@ -23,7 +23,7 @@ export default function SavedView({
       <div className="w-full max-w-md mx-auto bg-surface min-h-screen relative">
         <AppHeader title="저장한 레시피" />
 
-        <main className="flex-1 flex flex-col px-5 py-2 gap-4 pb-10">
+        <main className="flex-1 flex flex-col px-5 py-2 gap-4 pb-24">
           {savedRecipes.length === 0 ? (
             <div className="flex flex-col items-center justify-center flex-1 mt-20 text-on-surface-variant gap-2">
               <Bookmark size={48} className="mb-2 text-outline" />

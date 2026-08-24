@@ -275,7 +275,8 @@ export default function RecipeDetailView({
                   <h2 className="text-lg font-bold">조리 순서</h2>
                   <span className="text-xs text-outline">{doneSteps.size} / {detail.steps.length} 완료</span>
                 </div>
-                <ol className="space-y-3">
+                <ol className="relative space-y-3">
+                  <div className="absolute left-[30px] top-2 bottom-2 w-0.5 bg-gradient-to-b from-transparent via-outline-variant to-transparent" aria-hidden="true" />
                   {detail.steps.map((step, idx) => {
                     const done = doneSteps.has(idx);
                     return (
@@ -283,7 +284,7 @@ export default function RecipeDetailView({
                         <button
                           onClick={() => toggleStep(idx)}
                           aria-pressed={done}
-                          className={`w-full text-left bg-white rounded-xl p-4 shadow-sm border flex gap-3 transition-colors ${done ? 'border-primary/40 bg-primary/5' : 'border-surface-variant'}`}
+                          className={`relative z-10 w-full text-left bg-white rounded-xl p-4 shadow-sm border flex gap-3 transition-colors ${done ? 'border-primary/40 bg-primary/5' : 'border-surface-variant'}`}
                         >
                           <span className={`w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-sm font-bold ${done ? 'bg-primary text-white' : 'bg-surface-container-high text-on-surface-variant'}`}>
                             {done ? <Check size={16} /> : idx + 1}
