@@ -19,6 +19,8 @@
     "test:rules": "firebase emulators:exec --only firestore --project demo-naengteol \"node --import tsx --test tests/firestore-rules.test.ts\""
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
@@ -32,6 +34,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-router-dom": "^7.18.2",
+    "three": "^0.185.1",
     "vite": "^6.2.3"
   },
   "devDependencies": {

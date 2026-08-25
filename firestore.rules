@@ -26,13 +26,11 @@ service cloud.firestore {
     // ---------- 사용자 프로필 ----------
 
     function validProfile() {
-      return incoming().keys().hasOnly(['email', 'displayName', 'photoURL', 'createdAt', 'updatedAt', 'notifyExpiry', 'fridgeType'])
+      return incoming().keys().hasOnly(['email', 'displayName', 'photoURL', 'createdAt', 'updatedAt', 'notifyExpiry'])
         && (!('displayName' in incoming()) || incoming().displayName == null || incoming().displayName is string)
         && (!('email' in incoming()) || incoming().email == null || incoming().email is string)
         // 임박 재료 알림(인앱) 수신 여부. 크론(api/cron/expiry-notify.ts)이 이 필드로 대상자를 찾는다
-        && (!('notifyExpiry' in incoming()) || incoming().notifyExpiry is bool)
-        // 가상 냉장고 일러스트 스타일. 실제 브랜드/모델이 아니라 mini/standard/sidebyside 중 하나
-        && (!('fridgeType' in incoming()) || incoming().fridgeType in ['mini', 'standard', 'sidebyside']);
+        && (!('notifyExpiry' in incoming()) || incoming().notifyExpiry is bool);
     }
 
     match /users/{userId} {
@@ -59,11 +57,16 @@ service cloud.firestore {
       // ---------- 저장한 레시피 ----------
 
       function validSaved() {
-        return incoming().keys().hasOnly(['title', 'source', 'time', 'difficulty', 'author', 'tags', 'savedAt'])
+        return incoming().keys().hasOnly(['title', 'source', 'time', 'difficulty', 'author', 'tags', 'savedAt', 'servings', 'usedIngredients', 'steps'])
           && incoming().title is string
           && incoming().title.size() > 0 && incoming().title.size() <= 100
           && incoming().source in ['ai', 'community', 'celeb']
-          && incoming().tags is list && incoming().tags.size() <= 20;
+          && incoming().tags is list && incoming().tags.size() <= 20
+          // AI 레시피는 조리법(servings/usedIngredients/steps)을 같이 저장한다 — 이 필드들이
+          // allow-list에 빠져 있어서 AI 레시피 저장이 전부 거부되던 버그가 있었다(2026-08-25)
+          && (!('servings' in incoming()) || incoming().servings is string)
+          && (!('usedIngredients' in incoming()) || (incoming().usedIngredients is list && incoming().usedIngredients.size() <= 30))
+          && (!('steps' in incoming()) || (incoming().steps is list && incoming().steps.size() <= 20));
       }
 
       match /saved/{savedId} {

@@ -1,19 +1,17 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertCircle, Camera, ChevronRight, LayoutGrid, List, Plus,
+  AlertCircle, Camera, Check, ChevronRight, Plus,
   Refrigerator, Search, Settings, ShoppingBag, Trash2, Utensils, UtensilsCrossed, Wand2,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ItemIcon } from '../components/ItemIcon';
 import NotificationBell from '../components/NotificationBell';
-import VirtualFridge from '../components/VirtualFridge';
 import { recipePath } from '../lib/paths';
 import {
   INGREDIENT_CATEGORIES,
   summarize,
   type ConsumeAction,
-  type FridgeType,
   type HistoryEntry,
   type IngredientCategory,
   type IngredientVM,
@@ -240,7 +238,6 @@ export default function HomeView({
   photoURL,
   unreadNotifications,
   recipes,
-  fridgeType,
   onAdd,
   onConsume,
 }: {
@@ -249,7 +246,6 @@ export default function HomeView({
   photoURL: string | null;
   unreadNotifications: number;
   recipes: RecommendedRecipe[];
-  fridgeType: FridgeType;
   onAdd: (item: NewIngredient) => Promise<void>;
   onConsume: (item: IngredientVM, action: ConsumeAction) => void;
 }) {
@@ -260,7 +256,6 @@ export default function HomeView({
   const [search, setSearch] = useState('');
   const [urgentIndex, setUrgentIndex] = useState(0);
   const urgentTrackRef = useRef<HTMLDivElement>(null);
-  const [viewMode, setViewMode] = useState<'list' | 'fridge'>('list');
   const [selectedForRecipe, setSelectedForRecipe] = useState<Set<string>>(new Set());
 
   const toggleSelectForRecipe = (id: string) =>
@@ -422,29 +417,9 @@ export default function HomeView({
         <section className="space-y-4">
           <div className="flex justify-between items-end">
             <h2 className="text-xl font-semibold">내 재료 <span className="text-base text-outline font-normal">{ingredients.length}개</span></h2>
-            <div className="flex items-center gap-3">
-              <div className="flex rounded-lg border border-outline-variant overflow-hidden">
-                <button
-                  onClick={() => setViewMode('list')}
-                  aria-pressed={viewMode === 'list'}
-                  aria-label="리스트로 보기"
-                  className={`p-1.5 ${viewMode === 'list' ? 'bg-primary text-white' : 'bg-white text-on-surface-variant'}`}
-                >
-                  <List size={16} />
-                </button>
-                <button
-                  onClick={() => setViewMode('fridge')}
-                  aria-pressed={viewMode === 'fridge'}
-                  aria-label="냉장고로 보기"
-                  className={`p-1.5 ${viewMode === 'fridge' ? 'bg-primary text-white' : 'bg-white text-on-surface-variant'}`}
-                >
-                  <LayoutGrid size={16} />
-                </button>
-              </div>
-              <button onClick={() => setShowAddModal(true)} className="text-sm text-primary font-semibold flex items-center gap-1">
-                <Plus size={16} /> 직접 추가
-              </button>
-            </div>
+            <button onClick={() => setShowAddModal(true)} className="text-sm text-primary font-semibold flex items-center gap-1">
+              <Plus size={16} /> 직접 추가
+            </button>
           </div>
 
           {ingredients.length >= 8 && (
@@ -482,32 +457,34 @@ export default function HomeView({
             <div className="text-center py-8 text-outline">
               {search.trim() ? `"${search.trim()}"에 해당하는 재료가 없어요.` : '해당 카테고리의 재료가 없습니다.'}
             </div>
-          ) : viewMode === 'fridge' ? (
-            <div className="space-y-3">
-              <VirtualFridge
-                type={fridgeType}
-                items={filtered}
-                selected={selectedForRecipe}
-                onToggleSelect={toggleSelectForRecipe}
-              />
-              {selectedForRecipe.size > 0 && (
-                <button
-                  onClick={goRecipeWithSelection}
-                  className="w-full h-12 rounded-xl bg-primary text-white font-semibold flex items-center justify-center gap-2 shadow-sm hover:bg-primary/90 transition-colors"
-                >
-                  <Wand2 size={18} /> 선택한 {selectedForRecipe.size}개로 추천받기
-                </button>
-              )}
-            </div>
           ) : (
             <div className="space-y-3">
+              {selectedForRecipe.size === 0 && (
+                <p className="text-xs text-outline">재료를 눌러 선택하면 그 재료만으로 추천받을 수 있어요</p>
+              )}
               {filtered.map((item) => {
                 const badge = freshnessBadge(item.daysLeft);
+                const isSelected = selectedForRecipe.has(item.id);
                 return (
-                <div key={item.id} className="bg-white shadow-sm rounded-2xl p-4 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className="w-10 h-10 shrink-0 rounded-lg bg-secondary-container text-on-secondary-container flex items-center justify-center">
+                <div
+                  key={item.id}
+                  className={`bg-white shadow-sm rounded-2xl p-4 flex items-center justify-between gap-3 border transition-colors ${
+                    isSelected ? 'border-primary bg-primary/5' : 'border-transparent'
+                  }`}
+                >
+                  <button
+                    onClick={() => toggleSelectForRecipe(item.id)}
+                    aria-pressed={isSelected}
+                    aria-label={`${item.name} 추천 재료로 ${isSelected ? '선택 해제' : '선택'}`}
+                    className="flex-1 flex items-center gap-4 min-w-0 text-left"
+                  >
+                    <div className="relative w-10 h-10 shrink-0 rounded-lg bg-secondary-container text-on-secondary-container flex items-center justify-center">
                       <ItemIcon category={item.category} />
+                      {isSelected && (
+                        <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-primary text-white flex items-center justify-center">
+                          <Check size={10} />
+                        </span>
+                      )}
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -524,7 +501,7 @@ export default function HomeView({
                         />
                       </div>
                     </div>
-                  </div>
+                  </button>
                   <button
                     onClick={() => setConsumeTarget(item)}
                     aria-label={`${item.name} 정리하기`}
@@ -535,6 +512,14 @@ export default function HomeView({
                 </div>
                 );
               })}
+              {selectedForRecipe.size > 0 && (
+                <button
+                  onClick={goRecipeWithSelection}
+                  className="w-full h-12 rounded-xl bg-primary text-white font-semibold flex items-center justify-center gap-2 shadow-sm hover:bg-primary/90 transition-colors"
+                >
+                  <Wand2 size={18} /> 선택한 {selectedForRecipe.size}개로 추천받기
+                </button>
+              )}
             </div>
           )}
         </section>

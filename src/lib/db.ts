@@ -16,11 +16,9 @@ import {
 import { db } from './firebase';
 import {
   expiryFromDays,
-  FRIDGE_TYPES,
   type AppNotification,
   type CommunityRecipe,
   type ConsumeAction,
-  type FridgeType,
   type HistoryEntry,
   type Ingredient,
   type IngredientCategory,
@@ -270,30 +268,6 @@ export async function setNotifyExpiry(uid: string, enabled: boolean) {
   await setDoc(
     doc(db, 'users', uid),
     { notifyExpiry: enabled, updatedAt: serverTimestamp() },
-    { merge: true },
-  );
-}
-
-// 가상 냉장고 일러스트로 쓸 스타일(기종이 아니라 타입). users/{uid} 문서의 fridgeType 필드로 관리한다
-export function subscribeFridgeType(
-  uid: string,
-  onChange: (type: FridgeType) => void,
-  onError?: (e: Error) => void,
-) {
-  return onSnapshot(
-    doc(db, 'users', uid),
-    (snap) => {
-      const value = snap.data()?.fridgeType;
-      onChange(FRIDGE_TYPES.includes(value) ? value : 'standard');
-    },
-    onError,
-  );
-}
-
-export async function setFridgeType(uid: string, type: FridgeType) {
-  await setDoc(
-    doc(db, 'users', uid),
-    { fridgeType: type, updatedAt: serverTimestamp() },
     { merge: true },
   );
 }

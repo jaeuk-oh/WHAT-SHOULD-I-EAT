@@ -1,72 +1,260 @@
-import React, { useState } from 'react';
-import { animate, motion, useMotionValue, useTransform, type PanInfo } from 'motion/react';
+import React, { Suspense, useRef, useState } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { ContactShadows, Line, RoundedBox } from '@react-three/drei';
+import { animate, motion, useMotionValue } from 'motion/react';
+import * as THREE from 'three';
 
 /** 드래그해서 열어야 하는 최소 이동 거리 (px) */
 const DRAG_THRESHOLD = -80;
-/** 드래그 최대 이동 거리 = 문 너비와 동일하게 설정 */
+/** 드래그 최대 이동 거리 — 이만큼 밀면 문이 완전히 열린다 */
 const DOOR_TRAVEL = 200;
+/**
+ * 문이 완전히 열렸을 때의 회전각(라디안). 90도에 가까우면 화면과 평행해져 안 보이므로 여유를 둠.
+ * 경첩이 오른쪽(hingeX = +halfW)에 있으므로 양수 각도로 돌아야 문이 카메라 쪽(+Z)으로 열린다 —
+ * 부호가 반대면 드래그로 여는 방향과 triggerOpen()이 애니메이션하는 방향이 서로 어긋나 버린다.
+ */
+const MAX_OPEN_ANGLE = 1.55;
+
+/** 냉장고 치수(임의 단위). 문 2장(냉동실/냉장실)이 있는 몸체 — tests/ref_1.png 참고 */
+const WIDTH = 1.7;
+const HEIGHT = 2.5;
+const DEPTH = 1.25;
+const FREEZER_HEIGHT = 0.85;
+const PANEL = 0.06;
+
+const CREAM = '#f6faea';
+const MINT = '#c8f17a';
+const OLIVE = '#456805';
+const OLIVE_SOFT = 'rgba(69, 104, 5, 0.55)';
 
 interface FridgeEntryTransitionProps {
   onComplete: () => void;
 }
 
+type Phase = 'idle' | 'opening' | 'zooming';
+
 /**
- * 로그인 직후에만 표시되는 전체화면 입장 트랜지션.
- * 냉장고 문을 왼쪽으로 당기거나 "들어가기" 버튼을 누르면 문이 열리고, 문이 다 열리면
- * 카메라가 냉장고 안쪽 빛을 향해 훅 빨려 들어가듯 확대되며(줌) 화면 전체가 밝게 번쩍인 뒤
+ * 문에 그리는 눈·볼·웃는 입 — tests/ref_1.png의 캐릭터를 3D 지오메트리로 옮김.
+ * x는 문의 가로 중심(경첩 기준 로컬 좌표)을 넘겨받는다 — 안 넘기면 경첩 선(0)에 쏠려 보인다.
+ */
+function Face({ x, z }: { x: number; z: number }) {
+  const smilePoints = new THREE.QuadraticBezierCurve3(
+    new THREE.Vector3(-0.16, 0, 0),
+    new THREE.Vector3(0, -0.14, 0),
+    new THREE.Vector3(0.16, 0, 0),
+  ).getPoints(20);
+
+  return (
+    <group position={[x, 0.42, z]}>
+      <mesh position={[-0.17, 0.14, 0]}>
+        <circleGeometry args={[0.045, 20]} />
+        <meshBasicMaterial color={OLIVE} />
+      </mesh>
+      <mesh position={[0.17, 0.14, 0]}>
+        <circleGeometry args={[0.045, 20]} />
+        <meshBasicMaterial color={OLIVE} />
+      </mesh>
+      <mesh position={[-0.32, -0.02, -0.005]}>
+        <circleGeometry args={[0.07, 20]} />
+        <meshBasicMaterial color={MINT} transparent opacity={0.55} />
+      </mesh>
+      <mesh position={[0.32, -0.02, -0.005]}>
+        <circleGeometry args={[0.07, 20]} />
+        <meshBasicMaterial color={MINT} transparent opacity={0.55} />
+      </mesh>
+      <Line points={smilePoints} color={OLIVE} lineWidth={3.5} />
+    </group>
+  );
+}
+
+/** 얇은 판(box) 하나 — 냉장고 몸체(뒤/좌/우/위/아래)를 이 패널들로 짜서 앞면이 뚫린 상자를 만든다 */
+function Panel({ position, size }: { position: [number, number, number]; size: [number, number, number] }) {
+  return (
+    <mesh position={position}>
+      <boxGeometry args={size} />
+      <meshStandardMaterial color={CREAM} roughness={0.85} />
+    </mesh>
+  );
+}
+
+/**
+ * 문 하나. pivot 그룹을 문의 오른쪽 모서리(경첩)에 두고, 문 메시 자체는 왼쪽으로
+ * width/2 만큼 옮겨서 배치한다 — 그룹을 회전시키면 경첩을 축으로 문이 도는 것처럼 보인다
+ * (CSS `transform-origin`과 같은 원리를 3D 피벗으로 구현). 경첩을 오른쪽에 둔 건
+ * tests/ref_1.png 참고용 이미지의 손잡이가 왼쪽에 있어서 — 왼쪽으로 드래그해서 여는
+ * 기존 제스처와도 방향이 맞는다(왼쪽 손잡이를 왼쪽으로 당겨서 여는 동작).
+ */
+function Door({
+  pivotRef,
+  hingeX,
+  bottomY,
+  width,
+  height,
+  showFace,
+}: {
+  pivotRef?: React.RefObject<THREE.Group | null>;
+  hingeX: number;
+  bottomY: number;
+  width: number;
+  height: number;
+  showFace?: boolean;
+}) {
+  return (
+    <group ref={pivotRef} position={[hingeX, bottomY, DEPTH / 2]}>
+      <RoundedBox args={[width, height, PANEL * 1.4]} radius={0.05} smoothness={3} position={[-width / 2, height / 2, 0]}>
+        <meshStandardMaterial color={CREAM} roughness={0.7} />
+      </RoundedBox>
+      {/* 손잡이 (왼쪽) */}
+      <mesh position={[-(width - 0.09), height / 2, PANEL * 0.8]}>
+        <cylinderGeometry args={[0.028, 0.028, height * 0.32, 12]} />
+        <meshStandardMaterial color={OLIVE} roughness={0.4} metalness={0.15} />
+      </mesh>
+      {showFace && <Face x={-width / 2} z={PANEL * 0.75} />}
+    </group>
+  );
+}
+
+function FridgeScene({
+  phase,
+  angle,
+  zoomT,
+}: {
+  phase: Phase;
+  angle: ReturnType<typeof useMotionValue<number>>;
+  zoomT: ReturnType<typeof useMotionValue<number>>;
+}) {
+  const doorPivot = useRef<THREE.Group>(null);
+  const bodyGroup = useRef<THREE.Group>(null);
+  const idleT = useRef(0);
+  const { camera } = useThree();
+
+  const startCam = useRef({ z: 5.4, y: 1.15, fov: 42 });
+  const endCam = useRef({ z: -0.35, y: 1.35, fov: 100 });
+
+  useFrame((_, delta) => {
+    idleT.current += delta;
+
+    if (doorPivot.current) {
+      doorPivot.current.rotation.y = angle.get();
+    }
+
+    if (bodyGroup.current) {
+      const breathe = phase === 'idle' ? Math.sin(idleT.current * 1.1) * 0.012 : 0;
+      bodyGroup.current.scale.setScalar(1 + breathe);
+    }
+
+    const t = zoomT.get();
+    if (t > 0) {
+      const cam = camera as THREE.PerspectiveCamera;
+      cam.position.z = THREE.MathUtils.lerp(startCam.current.z, endCam.current.z, t);
+      cam.position.y = THREE.MathUtils.lerp(startCam.current.y, endCam.current.y, t);
+      cam.fov = THREE.MathUtils.lerp(startCam.current.fov, endCam.current.fov, t);
+      cam.lookAt(0, 1.25, -0.4);
+      cam.updateProjectionMatrix();
+    }
+  });
+
+  const halfW = WIDTH / 2;
+  const mainDoorHeight = HEIGHT - FREEZER_HEIGHT;
+
+  return (
+    <>
+      <ambientLight intensity={0.75} />
+      <directionalLight position={[2, 3, 4]} intensity={0.9} />
+      <pointLight position={[0, 1.6, -0.9]} intensity={1.4} color="#fff8c6" distance={3} />
+
+      <group ref={bodyGroup} position={[0, 0, 0]}>
+        {/* 몸체 — 앞면이 뚫린 상자(뒤/좌/우/위/아래 패널) */}
+        <Panel position={[0, HEIGHT / 2, -DEPTH / 2]} size={[WIDTH, HEIGHT, PANEL]} />
+        <Panel position={[-halfW, HEIGHT / 2, 0]} size={[PANEL, HEIGHT, DEPTH]} />
+        <Panel position={[halfW, HEIGHT / 2, 0]} size={[PANEL, HEIGHT, DEPTH]} />
+        <Panel position={[0, HEIGHT, 0]} size={[WIDTH, PANEL, DEPTH]} />
+        <Panel position={[0, 0, 0]} size={[WIDTH, PANEL, DEPTH]} />
+
+        {/* 선반 */}
+        <Panel position={[0, mainDoorHeight * 0.35, -0.1]} size={[WIDTH - 0.14, 0.03, DEPTH - 0.3]} />
+        <Panel position={[0, mainDoorHeight * 0.68, -0.1]} size={[WIDTH - 0.14, 0.03, DEPTH - 0.3]} />
+
+        {/* 음식 소품 */}
+        <mesh position={[-0.35, mainDoorHeight * 0.35 + 0.14, -0.15]}>
+          <boxGeometry args={[0.18, 0.26, 0.18]} />
+          <meshStandardMaterial color="#f68700" />
+        </mesh>
+        <mesh position={[0.05, mainDoorHeight * 0.35 + 0.11, -0.15]}>
+          <sphereGeometry args={[0.11, 16, 16]} />
+          <meshStandardMaterial color={MINT} />
+        </mesh>
+        <mesh position={[0.35, mainDoorHeight * 0.68 + 0.15, -0.15]}>
+          <boxGeometry args={[0.15, 0.3, 0.15]} />
+          <meshStandardMaterial color="#88b04b" />
+        </mesh>
+
+        {/* 냉동실 문(위, 고정) — tests/ref_1.png처럼 얼굴은 이 문에 그린다 */}
+        <Door hingeX={halfW} bottomY={mainDoorHeight} width={WIDTH} height={FREEZER_HEIGHT} showFace />
+        {/* 냉장실 문(아래, 드래그로 여닫음) */}
+        <Door pivotRef={doorPivot} hingeX={halfW} bottomY={0} width={WIDTH} height={mainDoorHeight} />
+      </group>
+
+      <ContactShadows position={[0, 0, 0]} opacity={0.4} scale={4} blur={2.2} far={2} />
+    </>
+  );
+}
+
+/**
+ * 로그인 직후에만 표시되는 전체화면 3D 입장 트랜지션.
+ * 냉장고 문을 왼쪽으로 당기거나 "들어가기" 버튼을 누르면 실제 3D 경첩 회전으로 문이 열리고,
+ * 문이 다 열리면 카메라가 안쪽으로 밀고 들어가며(dolly-in) 화면이 밝게 번쩍인 뒤
  * 그 자리에서 앱의 홈 화면이 드러난다.
  *
  * 접근성: 드래그 불가 환경을 위해 "들어가기" 버튼이 항상 노출된다.
  */
 export default function FridgeEntryTransition({ onComplete }: FridgeEntryTransitionProps) {
-  // 이 값은 "화면상 이동 거리"가 아니라 "회전을 계산하기 위한 입력값"으로만 쓴다.
-  // 문에 x(이동)를 직접 걸지 않는 이유: 경첩에 달린 문은 옆으로 미끄러지지 않고 제자리에서 돈다 —
-  // x와 rotateY를 동시에 걸면 "회전"이 아니라 "미끄러져 나가는" 것처럼 보인다.
-  const dragX = useMotionValue(0);
-  // 드래그 거리 → 문 열림 각도 (0° → -78°, 90°에 너무 가까워지면 backface가 뒤집혀 보이므로 여유를 둠)
-  const doorRotateY = useTransform(dragX, [-DOOR_TRAVEL, 0], [-78, 0]);
-  // 드래그 거리 → 내부 광원 밝기
-  const interiorOpacity = useTransform(dragX, [-DOOR_TRAVEL, -DOOR_TRAVEL * 0.3, 0], [1, 0.55, 0]);
-  // 문이 돌아갈수록(정면광을 비스듬히 받으므로) 어두워지는 음영 — 회전감을 눈에 더 확실히 준다
-  const doorShade = useTransform(dragX, [-DOOR_TRAVEL, 0], [0.5, 0]);
-  // 경첩 쪽(왼쪽 안)에 문이 드리우는 그림자 — 열릴수록 진해짐
-  const hingeShadow = useTransform(dragX, [-DOOR_TRAVEL, -DOOR_TRAVEL * 0.5, 0], [0.05, 0.35, 0]);
+  const angle = useMotionValue(0);
+  const zoomT = useMotionValue(0);
+  const [phase, setPhase] = useState<Phase>('idle');
 
-  const clampOffset = (x: number) => Math.max(-DOOR_TRAVEL, Math.min(0, x));
-
-  const [isOpening, setIsOpening] = useState(false);
-  // 문이 다 열린 뒤: 내부 빛을 향해 화면이 확대되며 빨려 들어가는 마무리 단계
-  const [isZooming, setIsZooming] = useState(false);
+  const draggingRef = useRef(false);
+  const startXRef = useRef(0);
 
   const triggerOpen = () => {
-    if (isOpening) return;
-    setIsOpening(true);
-    animate(dragX, -DOOR_TRAVEL, {
+    if (phase !== 'idle') return;
+    setPhase('opening');
+    animate(angle, MAX_OPEN_ANGLE, {
       type: 'spring',
       stiffness: 155,
       damping: 19,
       onComplete: () => {
-        // 문이 완전히 열렸다 — 잠깐 멈춘 뒤 안쪽 빛으로 확대해 들어가며 화면 전환
         setTimeout(() => {
-          setIsZooming(true);
+          setPhase('zooming');
+          animate(zoomT, 1, { duration: 0.62, ease: [0.5, 0, 0.85, 0] });
           setTimeout(onComplete, 640);
         }, 260);
       },
     });
   };
 
-  /** 실제 손가락 이동량(offset)을 회전 전용 motion value에 그대로 반영한다 — 문 자체는 이동하지 않는다. */
-  const handleDrag = (_: PointerEvent | MouseEvent | TouchEvent, info: PanInfo) => {
-    if (isOpening) return;
-    dragX.set(clampOffset(info.offset.x));
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (phase !== 'idle') return;
+    draggingRef.current = true;
+    startXRef.current = e.clientX;
   };
 
-  const handleDragEnd = (_: PointerEvent | MouseEvent | TouchEvent, info: PanInfo) => {
-    if (isOpening) return;
-    if (dragX.get() <= DRAG_THRESHOLD || info.velocity.x < -350) {
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!draggingRef.current) return;
+    const dx = Math.max(-DOOR_TRAVEL, Math.min(0, e.clientX - startXRef.current));
+    // dx는 0(닫힘)→-DOOR_TRAVEL(다 열림)로 움직인다. 부호를 한 번 더 뒤집어야
+    // dx=-DOOR_TRAVEL일 때 정확히 MAX_OPEN_ANGLE이 나온다(음수를 음수로 나누면 부호가 또 뒤집히므로).
+    angle.set(-(dx / DOOR_TRAVEL) * MAX_OPEN_ANGLE);
+  };
+
+  const endDrag = () => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    const openedEnough = (angle.get() / MAX_OPEN_ANGLE) * DOOR_TRAVEL >= -DRAG_THRESHOLD;
+    if (openedEnough) {
       triggerOpen();
     } else {
-      animate(dragX, 0, { type: 'spring', stiffness: 420, damping: 36 });
+      animate(angle, 0, { type: 'spring', stiffness: 420, damping: 36 });
     }
   };
 
@@ -74,171 +262,30 @@ export default function FridgeEntryTransition({ onComplete }: FridgeEntryTransit
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
-      className="fixed inset-0 z-50 bg-background flex flex-col items-center justify-center gap-10 overflow-hidden"
+      transition={{ duration: 0.2 }}
+      className="fixed inset-0 z-50 bg-background flex flex-col items-center justify-center gap-8 overflow-hidden touch-none select-none"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
     >
-      {/* 냉장고 (문이 다 열리면 안쪽 빛을 향해 확대되며 사라진다) */}
-      <motion.div
-        animate={
-          isZooming
-            ? { scale: 6.5, opacity: 0 }
-            : isOpening
-              ? { scale: 1 }
-              : { scale: [1, 1.012, 1] }
-        }
-        transition={
-          isZooming
-            ? { duration: 0.6, ease: [0.5, 0, 0.85, 0] }
-            : { repeat: Infinity, duration: 2.8, ease: 'easeInOut' }
-        }
-        className="relative select-none"
-        style={{ width: 200, height: 280, transformOrigin: '50% 45%' }}
-      >
-        {/* 바닥 그림자 — 냉장고가 바닥에 실제로 놓여있는 느낌 */}
-        <motion.div
-          className="absolute left-1/2 -translate-x-1/2 rounded-full"
-          style={{
-            bottom: -20,
-            width: 168,
-            height: 20,
-            background: 'radial-gradient(ellipse, rgba(20,30,0,0.3) 0%, transparent 72%)',
-          }}
-          animate={isZooming ? { opacity: 0 } : { opacity: [0.75, 0.95, 0.75], scale: [1, 1.03, 1] }}
-          transition={isZooming ? { duration: 0.3 } : { repeat: Infinity, duration: 2.8, ease: 'easeInOut' }}
-        />
-
-        {/* 바깥 테두리(본체 프레임) — 문과 살짝 구분되는 금속성 베젤 */}
-        <div
-          className="relative w-full h-full rounded-[30px] p-[3px]"
-          style={{
-            background: 'linear-gradient(160deg, #d7dcb9 0%, #96a768 100%)',
-            boxShadow: '0 16px 30px rgba(30, 40, 0, 0.26), inset 0 1.5px 2px rgba(255,255,255,0.5)',
-          }}
-        >
-          <div className="relative w-full h-full rounded-[27px] overflow-hidden" style={{ perspective: 480 }}>
-            {/* ── 냉장고 내부 (문 뒤에 표시됨) ── */}
-            <div
-              className="absolute inset-0 overflow-hidden"
-              style={{ background: 'linear-gradient(150deg, #fefce8 0%, #d4edaa 55%, #b6d97f 100%)' }}
-            >
-              {/* 중앙 광원 — 문이 열릴수록, 그리고 줌 단계에서 더 밝고 크게 */}
-              <motion.div
-                style={{ opacity: interiorOpacity }}
-                animate={isZooming ? { scale: 2.2 } : { scale: 1 }}
-                transition={isZooming ? { duration: 0.6, ease: 'easeIn' } : undefined}
-                className="absolute inset-0 flex items-center justify-center"
-              >
-                <div
-                  className="w-36 h-36 rounded-full"
-                  style={{ background: 'radial-gradient(circle, rgba(255,248,140,0.85) 0%, transparent 68%)' }}
-                />
-              </motion.div>
-
-              {/* 문이 열리면서 안쪽(경첩 쪽)에 드리우는 그림자 — 문이 실제로 앞으로 젖혀지는 느낌을 준다 */}
-              <motion.div
-                style={{
-                  opacity: hingeShadow,
-                  background: 'linear-gradient(90deg, rgba(20,30,0,0.65) 0%, transparent 60%)',
-                }}
-                className="absolute inset-y-0 left-0 w-2/5"
-              />
-
-              {/* 선반 라인 */}
-              <div className="absolute left-5 right-5 rounded-full bg-primary/15" style={{ top: 78, height: 1 }} />
-              <div className="absolute left-5 right-5 rounded-full bg-primary/15" style={{ top: 155, height: 1 }} />
-              <div className="absolute left-5 right-5 rounded-full bg-primary/15" style={{ top: 222, height: 1 }} />
-
-              {/* 음식 소품 */}
-              <div className="absolute bottom-9 left-1/2 -translate-x-1/2 flex gap-2.5 items-end">
-                <div className="w-5 h-9 rounded-md" style={{ background: '#f68700', opacity: 0.6 }} />
-                <div className="w-6 h-6 rounded-full" style={{ background: '#c8f17a', opacity: 0.72 }} />
-                <div className="w-4 h-10 rounded-sm" style={{ background: '#88b04b', opacity: 0.58 }} />
-                <div className="w-5 h-7 rounded" style={{ background: '#f3e4c0', opacity: 0.78 }} />
-              </div>
-            </div>
-
-            {/* ── 냉장고 문 (드래그 가능) ── */}
-            {/* dragConstraints를 0,0으로 잠가서 문 자체는 옆으로 미끄러지지 않게 하고,
-                onDrag에서 손가락 이동량만 읽어 rotateY 전용 motion value(dragX)에 반영한다.
-                경첩에 달린 문처럼 "제자리에서 회전"하는 느낌을 내기 위함 — x와 rotateY를 같이 걸면
-                미끄러져 나가는 것처럼 보여서 "진짜 열리는" 느낌이 안 났다. */}
-            <motion.div
-              drag={isOpening ? false : 'x'}
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0}
-              dragMomentum={false}
-              onDrag={handleDrag}
-              onDragEnd={handleDragEnd}
-              className="absolute inset-0 rounded-[26px] cursor-grab active:cursor-grabbing touch-none overflow-hidden"
-              style={{
-                rotateY: doorRotateY,
-                originX: 0,
-                transformStyle: 'preserve-3d',
-                background: 'linear-gradient(155deg, #f6faea 0%, #e2f0c8 100%)',
-                border: '2.5px solid rgba(69, 104, 5, 0.58)',
-                borderRadius: 26,
-                boxShadow: '6px 10px 24px rgba(30, 40, 0, 0.22)',
-              }}
-            >
-              {/* 문 앞면 — 캐릭터 */}
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-5">
-                {/* 눈 */}
-                <div className="flex gap-7">
-                  <span className="block rounded-full bg-primary" style={{ width: 13, height: 17 }} />
-                  <span className="block rounded-full bg-primary" style={{ width: 13, height: 17 }} />
-                </div>
-                {/* 웃음 */}
-                <svg width="54" height="28" viewBox="0 0 54 28" fill="none" aria-hidden>
-                  <path d="M4 5 Q27 25 50 5" stroke="#456805" strokeWidth="3" strokeLinecap="round" />
-                </svg>
-                {/* 브랜드 배지 */}
-                <div
-                  className="px-4 py-1.5 rounded-full bg-white/75 border border-primary/20"
-                  style={{ backdropFilter: 'blur(4px)' }}
-                >
-                  <span className="text-sm font-bold text-primary tracking-tight">냉털메이트</span>
-                </div>
-              </div>
-
-              {/* 손잡이 (오른쪽, 두 톤 하이라이트로 금속 느낌) */}
-              <div
-                className="absolute rounded-full"
-                style={{
-                  right: 13,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  width: 9,
-                  height: 56,
-                  background:
-                    'linear-gradient(90deg, rgba(69,104,5,0.55) 0%, rgba(69,104,5,0.25) 42%, rgba(255,255,255,0.55) 52%, rgba(69,104,5,0.4) 100%)',
-                  boxShadow: '0 1px 3px rgba(20,30,0,0.3)',
-                }}
-              />
-
-              {/* 광택 */}
-              <div
-                className="absolute inset-0 pointer-events-none"
-                style={{
-                  borderRadius: 24,
-                  background: 'linear-gradient(130deg, rgba(255,255,255,0.42) 0%, transparent 52%)',
-                }}
-              />
-
-              {/* 회전할수록 어두워지는 음영 — 문이 빛을 비스듬히 받게 되므로, 실제로 돌아가고 있다는 걸 눈으로 확인시켜준다 */}
-              <motion.div
-                style={{ opacity: doorShade, borderRadius: 24, background: '#1a2200' }}
-                className="absolute inset-0 pointer-events-none"
-              />
-            </motion.div>
-          </div>
-        </div>
-      </motion.div>
+      <div className="w-full flex-1" style={{ maxHeight: 460 }}>
+        <Suspense fallback={null}>
+          <Canvas
+            dpr={[1, 2]}
+            camera={{ position: [0, 1.15, 5.4], fov: 42 }}
+            gl={{ antialias: true, alpha: true }}
+          >
+            <FridgeScene phase={phase} angle={angle} zoomT={zoomT} />
+          </Canvas>
+        </Suspense>
+      </div>
 
       {/* 힌트 + 접근성 버튼 */}
       <motion.div
         initial={{ opacity: 0 }}
-        animate={{ opacity: isOpening ? 0 : 1 }}
-        transition={{ duration: 0.3, delay: isOpening ? 0 : 0.5 }}
+        animate={{ opacity: phase === 'idle' ? 1 : 0 }}
+        transition={{ duration: 0.3, delay: phase === 'idle' ? 0.5 : 0 }}
         className="flex flex-col items-center gap-3"
         aria-live="polite"
       >
@@ -252,22 +299,21 @@ export default function FridgeEntryTransition({ onComplete }: FridgeEntryTransit
         </motion.p>
         <button
           onClick={triggerOpen}
-          disabled={isOpening}
+          disabled={phase !== 'idle'}
           className="px-7 py-2.5 rounded-xl bg-primary text-on-primary text-sm font-semibold hover:opacity-90 active:scale-95 transition-all disabled:opacity-50"
           aria-label="냉장고 문 열고 앱으로 들어가기"
+          style={{ borderColor: OLIVE_SOFT }}
         >
           들어가기
         </button>
       </motion.div>
 
-      {/* 문이 다 열린 뒤 안쪽 빛으로 확대되며 화면을 하얗게 훅 채우는 플래시 — 그 직후 실제 홈 화면으로 전환된다 */}
+      {/* 문이 다 열린 뒤 카메라가 안으로 들어가며 화면을 하얗게 훅 채우는 플래시 */}
       <motion.div
         className="fixed inset-0 pointer-events-none"
-        style={{
-          background: 'radial-gradient(circle at 50% 45%, #fffdf3 0%, #fdf6d8 55%, transparent 78%)',
-        }}
+        style={{ background: 'radial-gradient(circle at 50% 45%, #fffdf3 0%, #fdf6d8 55%, transparent 78%)' }}
         initial={{ opacity: 0 }}
-        animate={{ opacity: isZooming ? [0, 0.12, 1] : 0 }}
+        animate={{ opacity: phase === 'zooming' ? [0, 0.12, 1] : 0 }}
         transition={{ duration: 0.62, times: [0, 0.45, 1], ease: 'easeIn' }}
         aria-hidden
       />

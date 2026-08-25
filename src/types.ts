@@ -1,15 +1,6 @@
 export const INGREDIENT_CATEGORIES = ['유제품', '콩류', '채소류', '육류', '과일', '기타'] as const;
 export type IngredientCategory = (typeof INGREDIENT_CATEGORIES)[number];
 
-/** 실제 브랜드/모델이 아니라 가상 냉장고 일러스트를 고르기 위한 스타일화된 타입 3종. */
-export const FRIDGE_TYPES = ['mini', 'standard', 'sidebyside'] as const;
-export type FridgeType = (typeof FRIDGE_TYPES)[number];
-export const FRIDGE_TYPE_LABELS: Record<FridgeType, string> = {
-  mini: '미니 냉장고',
-  standard: '일반 냉장고',
-  sidebyside: '양문형 냉장고',
-};
-
 export interface Ingredient {
   id: string;
   name: string;

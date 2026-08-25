@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Refrigerator } from 'lucide-react';
 import { useAuth } from './hooks/useAuth';
@@ -14,9 +14,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   saveRecipe,
-  setFridgeType,
   setNotifyExpiry,
-  subscribeFridgeType,
   subscribeHistory,
   subscribeIngredients,
   subscribeLikes,
@@ -31,7 +29,6 @@ import {
   startOfMonth,
   type AppNotification,
   type ConsumeAction,
-  type FridgeType,
   type HistoryEntry,
   type Ingredient,
   type IngredientVM,
@@ -40,7 +37,8 @@ import {
   type SavedRecipe,
   type SavedRecipeInput,
 } from './types';
-import FridgeEntryTransition from './components/FridgeEntryTransition';
+// three.js/@react-three 번들이 커서(~250KB gzip) 로그인 전 화면까지 무겁게 만들지 않도록 지연 로드한다
+const FridgeEntryTransition = lazy(() => import('./components/FridgeEntryTransition'));
 import HomeView from './views/HomeView';
 import LoginView from './views/LoginView';
 import NotificationsView from './views/NotificationsView';
@@ -150,7 +148,6 @@ export default function App() {
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [notifyExpiry, setNotifyExpiryState] = useState(false);
-  const [fridgeType, setFridgeTypeState] = useState<FridgeType>('standard');
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   // AI 추천 레시피 목록 캐시. /recipes를 떠났다 돌아와도 재생성하지 않고 그대로 보여준다 —
@@ -167,7 +164,6 @@ export default function App() {
       setLikedIds(new Set());
       setHistory([]);
       setNotifyExpiryState(false);
-      setFridgeTypeState('standard');
       setNotifications([]);
       return;
     }
@@ -178,7 +174,6 @@ export default function App() {
       subscribeLikes(uid, setLikedIds, (e) => console.error('좋아요 구독 실패:', e)),
       subscribeHistory(uid, startOfMonth(), setHistory, (e) => console.error('소진 기록 구독 실패:', e)),
       subscribeNotifyExpiry(uid, setNotifyExpiryState, (e) => console.error('알림 설정 구독 실패:', e)),
-      subscribeFridgeType(uid, setFridgeTypeState, (e) => console.error('냉장고 타입 구독 실패:', e)),
       subscribeNotifications(uid, setNotifications, (e) => console.error('알림함 구독 실패:', e)),
     ];
     return () => unsubs.forEach((unsub) => unsub());
@@ -260,15 +255,6 @@ export default function App() {
     });
   };
 
-  const handleSetFridgeType = (type: FridgeType) => {
-    if (!user) return;
-    setFridgeTypeState(type); // 낙관적 업데이트
-    setFridgeType(user.uid, type).catch((e) => {
-      console.error('냉장고 타입 저장 실패:', e);
-      toast.error('설정 저장에 실패했어요. 잠시 후 다시 시도해주세요.');
-    });
-  };
-
   const handleMarkNotificationRead = (id: string) => {
     if (!user) return;
     markNotificationRead(user.uid, id).catch((e) => console.error('알림 읽음 처리 실패:', e));
@@ -342,7 +328,6 @@ export default function App() {
                   photoURL={user.photoURL}
                   unreadNotifications={unreadNotifications}
                   recipes={recipes}
-                  fridgeType={fridgeType}
                   onAdd={handleAddIngredient}
                   onConsume={handleConsume}
                 />
@@ -396,8 +381,6 @@ export default function App() {
                   onLogout={logout}
                   notifyExpiry={notifyExpiry}
                   onToggleNotify={handleToggleNotify}
-                  fridgeType={fridgeType}
-                  onSetFridgeType={handleSetFridgeType}
                 />
               }
             />
@@ -408,9 +391,11 @@ export default function App() {
       {user && showBottomNav && <BottomNav />}
       {user && <FeedbackButton />}
 
-      {/* 로그인 직후에만 노출되는 냉장고 문 열기 입장 트랜지션 */}
+      {/* 로그인 직후에만 노출되는 냉장고 문 열기 입장 트랜지션 (3D 번들 지연 로드) */}
       {showFridgeEntry && (
-        <FridgeEntryTransition onComplete={() => setShowFridgeEntry(false)} />
+        <Suspense fallback={null}>
+          <FridgeEntryTransition onComplete={() => setShowFridgeEntry(false)} />
+        </Suspense>
       )}
     </div>
   );
