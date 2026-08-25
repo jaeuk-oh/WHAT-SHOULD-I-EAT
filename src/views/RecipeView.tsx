@@ -4,6 +4,7 @@ import { AlertTriangle, Bookmark, ChefHat, Check, ChevronRight, Info, PackagePlu
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import AppHeader from '../components/AppHeader';
 import LoadingMessages from '../components/LoadingMessages';
+import PotLoadingAnimation from '../components/PotLoadingAnimation';
 import { useToast } from '../components/Toast';
 import { subscribeRecipes } from '../lib/db';
 import { track } from '../lib/firebase';
@@ -106,6 +107,8 @@ export default function RecipeView({
   const [onlyAvailable, setOnlyAvailable] = useState(false);
 
   const urgent = ingredients.filter((i) => i.daysLeft <= 2);
+  // 로딩 애니메이션(냄비)에 넣을 카테고리 — 임박 재료를 우선하고, 없으면 가진 재료에서 고름
+  const potCategories = [...new Set((urgent.length > 0 ? urgent : ingredients).map((i) => i.category))].slice(0, 3);
 
   const visibleRecipes = sortRecipes(
     onlyAvailable ? recipes.filter((r) => r.missingIngredients.length === 0) : recipes,
@@ -322,15 +325,15 @@ export default function RecipeView({
                 </section>
               ) : loading ? (
                 <section className="flex flex-col gap-4" aria-busy="true">
-                  <div className="flex items-center gap-2">
-                    <RefreshCw size={15} className="animate-spin text-primary shrink-0" />
+                  <div className="flex flex-col items-center gap-2 py-2">
+                    <PotLoadingAnimation categories={potCategories} />
                     <LoadingMessages
                       messages={[
                         urgent.length > 0 ? `${urgent[0].name}부터 쓸 메뉴를 찾고 있어요...` : '냉장고 재료로 만들 메뉴를 찾고 있어요...',
                         '어울리는 레시피를 고르고 있어요...',
                         '조금만 기다려주세요...',
                       ]}
-                      className="text-sm text-on-surface-variant"
+                      className="text-sm text-on-surface-variant text-center"
                     />
                   </div>
                   {[0, 1, 2].map((i) => (

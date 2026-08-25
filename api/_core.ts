@@ -110,12 +110,16 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
   request += '레시피 3~4개를 추천해줘.';
 
   const response = await createTextCompletion({
+    temperature: 0.6,
     messages: [
       {
         role: 'system',
         content:
           '너는 1인 가구를 위한 냉장고 파먹기 요리 추천 셰프다. ' +
           '사용자의 냉장고 재료 목록을 보고 실제로 만들 수 있는 레시피를 추천한다. ' +
+          '실제로 존재하고 사람들이 흔히 해먹는 요리만 추천한다 — 이름만 봐도 무슨 음식인지 알 수 있어야 하고, 존재하지 않는 재료 조합을 지어내지 않는다. ' +
+          '추천 우선순위는 "사용자가 가진 재료를 최대한 많이 쓰는 레시피"가 "살 재료가 적게 필요한 레시피"보다 앞선다 — ' +
+          'missingIngredients는 가능하면 0~1개로 최소화하고, 특별한 이유 없이 2개를 넘기지 않는다. ' +
           'D-2 이하 임박 재료가 있으면 그 재료를 우선 사용하는 레시피를 앞쪽에 배치하고, warning에 임박 재료를 언급하며 warningType은 alert로 한다. ' +
           '임박 재료를 쓰지 않는 레시피의 warning은 짧은 유용한 코멘트로 하고 warningType은 info로 한다. ' +
           'tags에는 그 레시피에 쓰이는 주요 재료명을 넣되 사용자가 가진 재료를 앞에 둔다. ' +
@@ -133,13 +137,13 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
 
   const parsed = extractJson(response.choices[0]?.message?.content);
   const recipes = Array.isArray(parsed.recipes) ? (parsed.recipes as Partial<RecommendedRecipe>[]) : [];
-  return recipes.map((r) => ({
+  const mapped = recipes.map((r) => ({
     title: r.title ?? '',
     time: r.time ?? '',
     difficulty: r.difficulty ?? '보통',
     servings: r.servings ?? '1인분',
     warning: r.warning ?? '',
-    warningType: r.warningType === 'alert' ? 'alert' : 'info',
+    warningType: r.warningType === 'alert' ? ('alert' as const) : ('info' as const),
     tags: Array.isArray(r.tags) ? r.tags : [],
     usedIngredients: Array.isArray(r.usedIngredients) ? r.usedIngredients : [],
     // 목록 카드는 steps를 쓰지 않는다 — 모델에도 요구하지 않아 응답이 빨라진다
@@ -147,6 +151,20 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
     substitutes: Array.isArray(r.substitutes) ? r.substitutes : [],
     missingIngredients: Array.isArray(r.missingIngredients) ? r.missingIngredients : [],
   }));
+
+  // 모델이 "가진 재료 최대한 활용" 지시를 완벽히 따르지 않을 수 있어, 응답 순서를 한 번 더 보정한다.
+  // 임박 재료 경고(alert)가 있는 레시피는 그대로 앞에 두고, 그 안에서는 실제로 가진 재료를
+  // 많이 쓰는(=missingIngredients가 적은) 레시피를 우선한다. 동점이면 모델이 준 원래 순서를 유지한다.
+  return mapped
+    .map((recipe, index) => ({ recipe, index }))
+    .sort((a, b) => {
+      const alertDiff = (a.recipe.warningType === 'alert' ? 0 : 1) - (b.recipe.warningType === 'alert' ? 0 : 1);
+      if (alertDiff !== 0) return alertDiff;
+      const missingDiff = a.recipe.missingIngredients.length - b.recipe.missingIngredients.length;
+      if (missingDiff !== 0) return missingDiff;
+      return a.index - b.index;
+    })
+    .map(({ recipe }) => recipe);
 }
 
 const RECEIPT_JSON_SHAPE = `{ "items": [ { "name": string, "category": "${INGREDIENT_CATEGORIES.join('"|"')}", "quantity": string, "shelfLifeDays": integer } ] }`;
