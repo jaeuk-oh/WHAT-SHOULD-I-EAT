@@ -34,6 +34,28 @@ function extractJson(content: string | null | undefined): Record<string, unknown
   return JSON.parse(content.slice(start, end + 1)) as Record<string, unknown>;
 }
 
+/**
+ * "모든 텍스트는 한국어로"는 프롬프트 지시일 뿐이라 모델이 가끔 어긴다(예: "soon-to-be 사용권장").
+ * 프롬프트만으로는 확률적으로 언젠가 다시 뚫리므로, 응답을 파싱한 뒤 여기서 로마자 섞임을 구조적으로 막는다.
+ * amount(예: "200g")처럼 단위상 로마자가 정상인 필드에는 적용하지 않는다.
+ */
+const hasLatin = (s: string) => /[A-Za-z]/.test(s);
+
+/** 로마자가 섞이면 안전한 한국어 기본값으로 통째로 교체한다 — 일부만 지우면 "-to-be 사용권장"처럼 어색한 조각이 남는다. */
+function koreanOr(s: string, fallback: string): string {
+  return hasLatin(s) ? fallback : s;
+}
+
+/** 로마자가 섞인 항목을 배열에서 제거한다(재료명·태그처럼 그 항목만 빠져도 무방한 경우). */
+function dropLatin(arr: string[]): string[] {
+  return arr.filter((s) => !hasLatin(s));
+}
+
+const DIFFICULTY_VALUES = ['아주 쉬움', '쉬움', '보통', '어려움'] as const;
+function koreanDifficulty(s: string): (typeof DIFFICULTY_VALUES)[number] {
+  return (DIFFICULTY_VALUES as readonly string[]).includes(s) ? (s as (typeof DIFFICULTY_VALUES)[number]) : '보통';
+}
+
 type ChatParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
 
 /**
@@ -122,12 +144,14 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
           'missingIngredients는 가능하면 0~1개로 최소화하고, 특별한 이유 없이 2개를 넘기지 않는다. ' +
           'D-2 이하 임박 재료가 있으면 그 재료를 우선 사용하는 레시피를 앞쪽에 배치하고, warning에 임박 재료를 언급하며 warningType은 alert로 한다. ' +
           '임박 재료를 쓰지 않는 레시피의 warning은 짧은 유용한 코멘트로 하고 warningType은 info로 한다. ' +
-          'tags에는 그 레시피에 쓰이는 주요 재료명을 넣되 사용자가 가진 재료를 앞에 둔다. ' +
+          'tags에는 그 레시피에 실제로 쓰이는 재료명만 넣는다(다른 코멘트·상태 표시 금지) — 사용자가 가진 재료를 앞에 둔다. ' +
           '사용자에게 없는 재료가 꼭 필요하면 substitutes에 {missing: 없는 재료, replaceWith: 대체 재료}를 넣고, 대체 재료는 가능하면 사용자가 가진 것으로 고른다. 없으면 빈 배열. ' +
           'usedIngredients에는 이 레시피에 실제로 쓰는 재료와 1인분 기준 분량을 {name, amount} 형태로 넣고, 사용자가 가진 재료를 앞쪽에 둔다 (amount 예: "1/2개", "200g", "1큰술"). ' +
           'missingIngredients에는 이 요리에 꼭 필요하지만 사용자에게 없는 재료명만 넣는다. ' +
           '소금·후추·식용유·간장 같은 기본 조미료는 누구나 있다고 보고 missingIngredients에 넣지 않는다. ' +
-          "servings는 '1인분' 형태. time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나. 모든 텍스트는 한국어. " +
+          "servings는 '1인분' 형태. time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나. " +
+          '모든 텍스트는 순수 한국어로만 쓴다 — title·warning·tags·usedIngredients 등 어디에도 영어 단어를 섞지 않는다 ' +
+          '(예: "soon-to-be 사용권장"처럼 영어와 한국어를 섞은 표현 금지. "곧 소진할 재료로 추천해요"처럼 전부 한국어로). ' +
           '조리 순서(steps)는 요구하지 않는다 — 사용자가 상세 화면을 열 때 따로 생성한다.\n\n' +
           `다른 설명 없이 아래 형식의 JSON 객체만 답한다(코드펜스 금지):\n${RECOMMEND_JSON_SHAPE}`,
       },
@@ -152,10 +176,30 @@ export async function recommendRecipes(input: RecommendInput): Promise<Recommend
     missingIngredients: Array.isArray(r.missingIngredients) ? r.missingIngredients : [],
   }));
 
+  // 로마자 섞임 구조적 방어: title에 섞이면 그 레시피 자체를 버리고(자연스러운 대체 제목을 만들 수 없음),
+  // 그 외 필드는 안전한 한국어 기본값으로 바꾸거나 그 항목만 배열에서 뺀다.
+  const sanitized = mapped
+    .filter((r) => !hasLatin(r.title))
+    .map((r) => ({
+      ...r,
+      time: koreanOr(r.time, '15분'),
+      difficulty: koreanDifficulty(r.difficulty),
+      servings: koreanOr(r.servings, '1인분'),
+      warning: hasLatin(r.warning)
+        ? r.warningType === 'alert'
+          ? '곧 상하는 재료로 만들 수 있는 메뉴예요.'
+          : '지금 있는 재료로 만들 수 있는 메뉴예요.'
+        : r.warning,
+      tags: dropLatin(r.tags),
+      usedIngredients: r.usedIngredients.filter((u) => !hasLatin(u.name)),
+      substitutes: r.substitutes.filter((s) => !hasLatin(s.missing) && !hasLatin(s.replaceWith)),
+      missingIngredients: dropLatin(r.missingIngredients),
+    }));
+
   // 모델이 "가진 재료 최대한 활용" 지시를 완벽히 따르지 않을 수 있어, 응답 순서를 한 번 더 보정한다.
   // 임박 재료 경고(alert)가 있는 레시피는 그대로 앞에 두고, 그 안에서는 실제로 가진 재료를
   // 많이 쓰는(=missingIngredients가 적은) 레시피를 우선한다. 동점이면 모델이 준 원래 순서를 유지한다.
-  return mapped
+  return sanitized
     .map((recipe, index) => ({ recipe, index }))
     .sort((a, b) => {
       const alertDiff = (a.recipe.warningType === 'alert' ? 0 : 1) - (b.recipe.warningType === 'alert' ? 0 : 1);
@@ -198,12 +242,17 @@ export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
   const items = Array.isArray(parsed.items) ? (parsed.items as Partial<ScannedItem>[]) : [];
   return items
     .filter((i): i is Partial<ScannedItem> & { name: string } => typeof i.name === 'string' && i.name.trim().length > 0)
-    .map((i) => ({
-      name: i.name.trim(),
-      category: (INGREDIENT_CATEGORIES as readonly string[]).includes(i.category ?? '') ? (i.category as string) : '기타',
-      quantity: (i.quantity ?? '').trim().slice(0, 20) || '1개',
-      shelfLifeDays: Math.min(365, Math.max(1, Math.round(Number(i.shelfLifeDays) || 3))),
-    }));
+    .map((i) => {
+      const rawName = i.name.trim();
+      // 재고 항목이라 title처럼 통째로 버릴 수 없다 — 로마자만 걷어내고, 다 지워지면 원래 이름을 그대로 쓴다.
+      const cleanedName = rawName.replace(/[A-Za-z]+/g, '').replace(/\s{2,}/g, ' ').trim();
+      return {
+        name: cleanedName || rawName,
+        category: (INGREDIENT_CATEGORIES as readonly string[]).includes(i.category ?? '') ? (i.category as string) : '기타',
+        quantity: (i.quantity ?? '').trim().slice(0, 20) || '1개',
+        shelfLifeDays: Math.min(365, Math.max(1, Math.round(Number(i.shelfLifeDays) || 3))),
+      };
+    });
 }
 
 export interface RecipeDetailInput {
@@ -248,7 +297,8 @@ export async function getRecipeDetail(input: RecipeDetailInput): Promise<RecipeD
           'steps는 3~8단계로, 각 단계는 한 문장으로 명확하게 쓴다. ' +
           '불 세기·시간처럼 실패하기 쉬운 부분은 tip에 짧게 덧붙이고, 특별히 덧붙일 말이 없으면 tip은 빈 문자열로 둔다. ' +
           "time은 '15분' 형태, difficulty는 '아주 쉬움'|'쉬움'|'보통'|'어려움' 중 하나, servings는 '1인분' 형태. " +
-          'tips에는 보관법이나 응용법 같은 조언을 0~3개 넣는다. 모든 텍스트는 한국어.\n\n' +
+          'tips에는 보관법이나 응용법 같은 조언을 0~3개 넣는다. ' +
+          '모든 텍스트는 순수 한국어로만 쓴다 — 영어 단어를 섞지 않는다.\n\n' +
           `다른 설명 없이 아래 형식의 JSON 객체만 답한다(코드펜스 금지):\n${RECIPE_DETAIL_JSON_SHAPE}`,
       },
       {
@@ -259,14 +309,21 @@ export async function getRecipeDetail(input: RecipeDetailInput): Promise<RecipeD
   });
 
   const parsed = extractJson(response.choices[0]?.message?.content) as Partial<RecipeDetail>;
+  const ingredients = Array.isArray(parsed.ingredients) ? parsed.ingredients : [];
+  const steps = Array.isArray(parsed.steps) ? parsed.steps : [];
+  const tips = Array.isArray(parsed.tips) ? parsed.tips : [];
+
+  // 로마자 섞임 구조적 방어(recommendRecipes와 동일한 원칙). title은 이미 한글임이 보장된
+  // input.title(recommendRecipes를 거쳐옴)로 대체하고, 조리 단계는 통째로 버릴 수 없는 핵심 내용이라
+  // 그 단계만 배열에서 뺀다(팁은 부가 정보라 빈 문자열로 대체).
   return {
-    title: parsed.title ?? input.title,
-    summary: parsed.summary ?? '',
-    time: parsed.time ?? '',
-    difficulty: parsed.difficulty ?? '보통',
-    servings: parsed.servings ?? '1인분',
-    ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : [],
-    steps: Array.isArray(parsed.steps) ? parsed.steps : [],
-    tips: Array.isArray(parsed.tips) ? parsed.tips : [],
+    title: koreanOr(parsed.title ?? input.title, input.title),
+    summary: koreanOr(parsed.summary ?? '', ''),
+    time: koreanOr(parsed.time ?? '', '15분'),
+    difficulty: koreanDifficulty(parsed.difficulty ?? '보통'),
+    servings: koreanOr(parsed.servings ?? '', '1인분'),
+    ingredients: ingredients.filter((i) => !hasLatin(i.name)),
+    steps: steps.filter((s) => !hasLatin(s.text)).map((s) => ({ text: s.text, tip: hasLatin(s.tip) ? '' : s.tip })),
+    tips: dropLatin(tips),
   };
 }
