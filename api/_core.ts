@@ -15,9 +15,16 @@ export function getTextModel() {
   return process.env.NVIDIA_TEXT_MODEL || 'nvidia/nemotron-3.5-lightning-30b-a3b';
 }
 
-/** 영수증 이미지 인식용 비전-언어 모델. */
+/**
+ * 영수증 이미지 인식용 비전-언어 모델.
+ * 기존 기본값 nvidia/nemotron-nano-12b-v2-vl은 2026-08-26 NVIDIA NIM에서 단종(410 Gone)됐다.
+ * 후속으로 nvidia/nemotron-parse(전용 요청 형식 필요, 비호환) · meta/llama-3.2-90b-vision-instruct
+ * (품질은 가장 좋으나 응답 60초+로 Vercel 함수 제한에 걸림) · microsoft/phi-3-vision-128k-instruct ·
+ * nvidia/vila(둘 다 이 계정에서 404, 비활성)를 실제 한글 영수증으로 테스트해보고,
+ * 제한시간 안에 안정적으로 끝나는 11b로 교체함(대신 프롬프트에서 카테고리·주류 제외를 더 명시).
+ */
 export function getVisionModel() {
-  return process.env.NVIDIA_VISION_MODEL || 'nvidia/nemotron-nano-12b-v2-vl';
+  return process.env.NVIDIA_VISION_MODEL || 'meta/llama-3.2-11b-vision-instruct';
 }
 
 /**
@@ -221,9 +228,11 @@ export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
         role: 'system',
         content:
           '너는 한국 마트/편의점 영수증에서 식재료를 추출하는 도우미다. ' +
-          '영수증 이미지에서 식품 항목만 추출하고, 생활용품·주류·봉투 등 식재료가 아닌 항목은 제외한다. ' +
+          '영수증 이미지에서 식품 항목만 추출하고, 생활용품·봉투·비닐 같은 비식품은 제외한다. ' +
+          '소주·맥주·와인·막걸리 등 주류(예: 참이슬, 처음처럼, 카스, 테라)는 술이지 식재료가 아니므로 반드시 제외한다. ' +
           '각 항목의 상품명은 브랜드/용량을 뺀 간결한 재료명으로 정리한다 (예: "서울우유 1L" → "우유"). ' +
-          '카테고리는 주어진 목록에서만 고른다 (예: 두부·콩나물은 콩류, 애호박·오이 등 채소는 채소류, 우유·치즈는 유제품, 계란·면·소스는 기타). ' +
+          '카테고리는 주어진 목록에서만 고른다 (예: 두부·콩나물은 콩류, 애호박·오이 등 채소는 채소류, 우유·치즈는 유제품, ' +
+          '계란·면·소스는 기타, 돼지고기·소고기·닭고기·삼겹살·소시지·햄 등 고기·육가공품은 육류). ' +
           'quantity에는 영수증의 수량이나 용량을 짧게 적는다 (예: "1팩", "2개", "500g", "1L"). 알 수 없으면 "1개". ' +
           'shelfLifeDays는 일반적인 냉장 보관 기준 예상 보관일수를 정수로 추정한다.\n\n' +
           `다른 설명 없이 아래 형식의 JSON 객체만 답한다(코드펜스 금지):\n${RECEIPT_JSON_SHAPE}`,
@@ -236,6 +245,8 @@ export async function scanReceiptImage(image: string): Promise<ScannedItem[]> {
         ],
       },
     ],
+    // 영수증 한 장에 나올 항목 수는 뻔히 한정적이다 — 응답이 한없이 늘어지는 것을 막아 지연을 줄인다.
+    max_tokens: 1500,
   });
 
   const parsed = extractJson(response.choices[0]?.message?.content);
