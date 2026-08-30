@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { Camera, CheckCircle, Plus, Receipt, RefreshCw, X } from 'lucide-react';
+import { Camera, CheckCircle, Plus, RefreshCw, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AppHeader from '../components/AppHeader';
 import LoadingMessages from '../components/LoadingMessages';
@@ -106,21 +106,10 @@ export default function ReceiptView({ onSave }: { onSave: (items: NewIngredient[
             onChange={handleFileChange}
             className="hidden"
           />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={scanning}
-            className="w-full bg-primary text-white h-14 rounded-xl flex items-center justify-center gap-2 shadow-sm hover:bg-primary/90 disabled:opacity-60"
-          >
-            {scanning ? <RefreshCw size={24} className="animate-spin" /> : <Camera size={24} />}
-            <span className="font-semibold text-lg">
-              {scanning ? '인식 중...' : previewUrl ? '다른 영수증 올리기' : '영수증 올리기'}
-            </span>
-          </button>
-
           <div
             role="button"
             tabIndex={0}
-            aria-label="영수증 사진 선택하기"
+            aria-label={previewUrl ? '다른 영수증 사진으로 바꾸기' : '영수증 사진 선택하기'}
             onClick={() => !scanning && fileInputRef.current?.click()}
             onKeyDown={(e) => {
               if ((e.key === 'Enter' || e.key === ' ') && !scanning) {
@@ -128,14 +117,19 @@ export default function ReceiptView({ onSave }: { onSave: (items: NewIngredient[
                 fileInputRef.current?.click();
               }
             }}
-            className="mt-6 w-3/4 aspect-[2/3] border-2 border-dashed border-outline-variant rounded-xl overflow-hidden bg-white flex items-center justify-center relative shadow-inner cursor-pointer"
+            className="w-3/4 aspect-[2/3] border-2 border-dashed border-outline-variant rounded-xl overflow-hidden bg-white flex items-center justify-center relative shadow-inner cursor-pointer"
           >
             {previewUrl ? (
               <img src={previewUrl} alt="업로드한 영수증" className={`w-full h-full object-cover ${scanning ? 'opacity-50' : ''}`} />
             ) : (
               <div className="flex flex-col items-center justify-center p-4 text-center">
-                <Receipt size={40} className="mb-2 text-outline" />
-                <p className="text-sm font-medium text-outline">영수증 사진을 올리면<br />AI가 재료를 인식해요</p>
+                <Camera size={40} className="mb-2 text-outline" />
+                <p className="text-sm font-medium text-outline">탭해서 영수증 사진을 올리면<br />AI가 재료를 인식해요</p>
+              </div>
+            )}
+            {previewUrl && !scanning && (
+              <div className="absolute bottom-2 inset-x-2 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-black/55 text-white text-xs font-semibold">
+                <RefreshCw size={13} /> 탭해서 다른 사진으로 바꾸기
               </div>
             )}
             {scanning && (
