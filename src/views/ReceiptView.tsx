@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Camera, CheckCircle, Plus, Receipt, RefreshCw, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -20,6 +20,15 @@ export default function ReceiptView({ onSave }: { onSave: (items: NewIngredient[
   const [scanError, setScanError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const autoOpenedRef = useRef(false);
+
+  // 홈 화면에서 "영수증으로 추가"를 눌러 이 페이지로 들어온 게 곧 "사진을 올리겠다"는 의사표시이므로,
+  // 도착하자마자 선택창을 띄운다 — 안 그러면 버튼을 두 번(홈→여기, 여기→선택창) 눌러야 해서 어색하다.
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    autoOpenedRef.current = true;
+    fileInputRef.current?.click();
+  }, []);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -88,11 +97,12 @@ export default function ReceiptView({ onSave }: { onSave: (items: NewIngredient[
 
       <main className="flex-1 flex flex-col pb-32 overflow-y-auto max-w-md mx-auto w-full">
         <section className="px-5 py-8 bg-surface-container-low flex flex-col items-center justify-center rounded-b-2xl mb-6">
+          {/* capture 속성을 주면 모바일에서 카메라 촬영으로 바로 넘어가 버려 사진첩 선택지가
+              아예 안 뜬다 — 카메라/사진첩을 다 고를 수 있게 두지 않는다 */}
           <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
-            capture="environment"
             onChange={handleFileChange}
             className="hidden"
           />
@@ -107,7 +117,19 @@ export default function ReceiptView({ onSave }: { onSave: (items: NewIngredient[
             </span>
           </button>
 
-          <div className="mt-6 w-3/4 aspect-[2/3] border-2 border-dashed border-outline-variant rounded-xl overflow-hidden bg-white flex items-center justify-center relative shadow-inner">
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="영수증 사진 선택하기"
+            onClick={() => !scanning && fileInputRef.current?.click()}
+            onKeyDown={(e) => {
+              if ((e.key === 'Enter' || e.key === ' ') && !scanning) {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
+            className="mt-6 w-3/4 aspect-[2/3] border-2 border-dashed border-outline-variant rounded-xl overflow-hidden bg-white flex items-center justify-center relative shadow-inner cursor-pointer"
+          >
             {previewUrl ? (
               <img src={previewUrl} alt="업로드한 영수증" className={`w-full h-full object-cover ${scanning ? 'opacity-50' : ''}`} />
             ) : (
