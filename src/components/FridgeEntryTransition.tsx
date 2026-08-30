@@ -1,17 +1,18 @@
-import React, { Suspense, useRef, useState } from 'react';
+import React, { Suspense, useLayoutEffect, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { ContactShadows, Line, RoundedBox } from '@react-three/drei';
+import { ContactShadows, Edges, Line, RoundedBox } from '@react-three/drei';
 import { animate, motion, useMotionValue } from 'motion/react';
 import * as THREE from 'three';
 
 /** 드래그해서 열어야 하는 최소 이동 거리 (px) */
-const DRAG_THRESHOLD = -80;
+const DRAG_THRESHOLD = 80;
 /** 드래그 최대 이동 거리 — 이만큼 밀면 문이 완전히 열린다 */
 const DOOR_TRAVEL = 200;
 /**
  * 문이 완전히 열렸을 때의 회전각(라디안). 90도에 가까우면 화면과 평행해져 안 보이므로 여유를 둠.
- * 경첩이 오른쪽(hingeX = +halfW)에 있으므로 양수 각도로 돌아야 문이 카메라 쪽(+Z)으로 열린다 —
- * 부호가 반대면 드래그로 여는 방향과 triggerOpen()이 애니메이션하는 방향이 서로 어긋나 버린다.
+ * 경첩이 오른쪽(hingeX = +halfW)에 있으므로 양수 각도로 돌아야 문이 카메라 쪽(+Z)으로 열린다.
+ * 이 회전으로 문 손잡이(왼쪽)는 원근 투영상 화면 오른쪽으로 스윕한다 — 그래서 드래그도
+ * 오른쪽 방향을 열기로 매핑해야 스와이프 방향과 문이 열리는 방향이 화면에서 일치한다.
  */
 const MAX_OPEN_ANGLE = 1.55;
 
@@ -22,7 +23,8 @@ const DEPTH = 1.25;
 const FREEZER_HEIGHT = 0.85;
 const PANEL = 0.06;
 
-const CREAM = '#f6faea';
+/** LoginView의 SVG 캐릭터와 동일한 브랜드 크림톤 — 배경(#FCF9F2)과 구분되도록 Edges 윤곽선과 함께 사용 */
+const CREAM = '#f4f9e8';
 const MINT = '#c8f17a';
 const OLIVE = '#456805';
 const OLIVE_SOFT = 'rgba(69, 104, 5, 0.55)';
@@ -73,6 +75,9 @@ function Panel({ position, size }: { position: [number, number, number]; size: [
     <mesh position={position}>
       <boxGeometry args={size} />
       <meshStandardMaterial color={CREAM} roughness={0.85} />
+      {/* SVG 캐릭터의 올리브 stroke와 동일한 역할 — 윤곽선이 없으면 배경색과 거의 같은 크림톤이라
+          음영만 남아 무채색 덩어리로 보인다 */}
+      <Edges color={OLIVE} threshold={1} lineWidth={1.5} />
     </mesh>
   );
 }
@@ -81,8 +86,9 @@ function Panel({ position, size }: { position: [number, number, number]; size: [
  * 문 하나. pivot 그룹을 문의 오른쪽 모서리(경첩)에 두고, 문 메시 자체는 왼쪽으로
  * width/2 만큼 옮겨서 배치한다 — 그룹을 회전시키면 경첩을 축으로 문이 도는 것처럼 보인다
  * (CSS `transform-origin`과 같은 원리를 3D 피벗으로 구현). 경첩을 오른쪽에 둔 건
- * tests/ref_1.png 참고용 이미지의 손잡이가 왼쪽에 있어서 — 왼쪽으로 드래그해서 여는
- * 기존 제스처와도 방향이 맞는다(왼쪽 손잡이를 왼쪽으로 당겨서 여는 동작).
+ * tests/ref_1.png 참고용 이미지의 손잡이가 왼쪽에 있어서다. 이 배치에서 문이 열리는 동안
+ * 손잡이는 원근 투영상 화면 오른쪽으로 스윕하므로, 드래그 제스처는 오른쪽 방향을 열기로
+ * 매핑한다(handlePointerMove 참고) — 그래야 스와이프 방향과 문이 열리는 방향이 화면에서 일치한다.
  */
 function Door({
   pivotRef,
@@ -103,6 +109,7 @@ function Door({
     <group ref={pivotRef} position={[hingeX, bottomY, DEPTH / 2]}>
       <RoundedBox args={[width, height, PANEL * 1.4]} radius={0.05} smoothness={3} position={[-width / 2, height / 2, 0]}>
         <meshStandardMaterial color={CREAM} roughness={0.7} />
+        <Edges color={OLIVE} threshold={1} lineWidth={1.5} />
       </RoundedBox>
       {/* 손잡이 (왼쪽) */}
       <mesh position={[-(width - 0.09), height / 2, PANEL * 0.8]}>
@@ -130,6 +137,14 @@ function FridgeScene({
 
   const startCam = useRef({ z: 5.4, y: 1.15, fov: 42 });
   const endCam = useRef({ z: -0.35, y: 1.35, fov: 100 });
+
+  // R3F는 camera prop에 rotation이 없으면 camera.lookAt(0, 0, 0)을 기본 적용한다.
+  // 냉장고 모델은 바닥(y=0)~천장(y=HEIGHT)으로 세워져 있어 원점을 보면 카메라가
+  // 아래로 꺾여 상단(냉동실 문·얼굴)이 프레임 위로 잘려 나간다 — 모델의 세로 중심을 보게
+  // 초기 방향을 다시 잡아준다(zooming 단계에서 쓰는 lookAt 타깃과 동일한 지점).
+  useLayoutEffect(() => {
+    camera.lookAt(0, 1.25, -0.4);
+  }, [camera]);
 
   useFrame((_, delta) => {
     idleT.current += delta;
@@ -202,7 +217,7 @@ function FridgeScene({
 
 /**
  * 로그인 직후에만 표시되는 전체화면 3D 입장 트랜지션.
- * 냉장고 문을 왼쪽으로 당기거나 "들어가기" 버튼을 누르면 실제 3D 경첩 회전으로 문이 열리고,
+ * 냉장고 문을 오른쪽으로 당기거나 "들어가기" 버튼을 누르면 실제 3D 경첩 회전으로 문이 열리고,
  * 문이 다 열리면 카메라가 안쪽으로 밀고 들어가며(dolly-in) 화면이 밝게 번쩍인 뒤
  * 그 자리에서 앱의 홈 화면이 드러난다.
  *
@@ -241,16 +256,17 @@ export default function FridgeEntryTransition({ onComplete }: FridgeEntryTransit
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!draggingRef.current) return;
-    const dx = Math.max(-DOOR_TRAVEL, Math.min(0, e.clientX - startXRef.current));
-    // dx는 0(닫힘)→-DOOR_TRAVEL(다 열림)로 움직인다. 부호를 한 번 더 뒤집어야
-    // dx=-DOOR_TRAVEL일 때 정확히 MAX_OPEN_ANGLE이 나온다(음수를 음수로 나누면 부호가 또 뒤집히므로).
-    angle.set(-(dx / DOOR_TRAVEL) * MAX_OPEN_ANGLE);
+    // dx는 0(닫힘)→+DOOR_TRAVEL(다 열림)로 움직인다. 문 손잡이는 원근 투영상 화면
+    // 오른쪽으로 스윕하며 열리므로(MAX_OPEN_ANGLE 주석 참고), 오른쪽 드래그를 열기로 매핑해야
+    // 스와이프 방향과 문이 열리는 방향이 화면에서 일치한다.
+    const dx = Math.max(0, Math.min(DOOR_TRAVEL, e.clientX - startXRef.current));
+    angle.set((dx / DOOR_TRAVEL) * MAX_OPEN_ANGLE);
   };
 
   const endDrag = () => {
     if (!draggingRef.current) return;
     draggingRef.current = false;
-    const openedEnough = (angle.get() / MAX_OPEN_ANGLE) * DOOR_TRAVEL >= -DRAG_THRESHOLD;
+    const openedEnough = (angle.get() / MAX_OPEN_ANGLE) * DOOR_TRAVEL >= DRAG_THRESHOLD;
     if (openedEnough) {
       triggerOpen();
     } else {
@@ -290,12 +306,12 @@ export default function FridgeEntryTransition({ onComplete }: FridgeEntryTransit
         aria-live="polite"
       >
         <motion.p
-          animate={{ x: [0, -7, 0] }}
+          animate={{ x: [0, 7, 0] }}
           transition={{ repeat: Infinity, duration: 1.5, ease: 'easeInOut', repeatDelay: 0.15 }}
           className="text-sm text-on-surface-variant flex items-center gap-1.5"
           aria-hidden
         >
-          ← 문을 열어 들어가세요
+          문을 열어 들어가세요 →
         </motion.p>
         <button
           onClick={triggerOpen}
